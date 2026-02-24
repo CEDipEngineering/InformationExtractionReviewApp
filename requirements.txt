@@ -1,0 +1,5 @@
+streamlit>=1.42.0
+databricks-sdk>=0.44.0
+pandas>=2.0.0
+streamlit-pdf-viewer>=0.0.14
+streamlit-ace>=0.1.1
