@@ -7,11 +7,13 @@ A Streamlit app for reviewing and correcting the output of an information extrac
 ```mermaid
 flowchart TD
     A[PDF Files] -->|arrive at| B[UC Volume]
-    B -->|ai_parse_document| C[Delta Table\nRaw Parsed Content]
-    C -->|Information Extraction\nAgent Bricks| D[Delta Table\nExtracted Fields]
+    B --> PARSE[ai_parse_document]
+    PARSE --> C[Delta Table with Raw Parsed Content]
+    C -->|Information Extraction\nAgent Bricks| D[Delta Table with Extracted Fields]
     D -->|read by| E[Review App]
-    E -->|human expert\ncorrections| F[Destination Table\nReviewed Records]
+    E -->|human expert corrections| F[Destination Table with Reviewed Records]
     F -->|feedback loop| C
+    click PARSE "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_parse_document" "ai_parse_document docs"
 ```
 
 ## How it works
