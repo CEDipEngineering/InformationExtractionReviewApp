@@ -9,7 +9,7 @@ flowchart TD
     A[PDF Files] -->|arrive at| B[UC Volume]
     B --> PARSE[ai_parse_document]
     PARSE --> C[Delta Table with Raw Parsed Content]
-    C --> AGENT[Information Extraction\nAgent Bricks]
+    C --> AGENT[Information Extraction Agent Bricks]
     AGENT --> D[Delta Table with Extracted Fields]
     D -->|read by| E[Review App]
     E -->|human expert corrections| F[Destination Table with Reviewed Records]
