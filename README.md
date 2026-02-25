@@ -2,6 +2,18 @@
 
 A Streamlit app for reviewing and correcting the output of an information extraction pipeline. It reads records from a Unity Catalog Delta table, displays the source PDF alongside the extracted JSON side-by-side, and lets reviewers edit the JSON in place.
 
+## Pipeline Overview
+
+```mermaid
+flowchart TD
+    A[PDF Files] -->|arrive at| B[UC Volume]
+    B -->|ai_parse_document| C[Delta Table\nRaw Parsed Content]
+    C -->|Information Extraction\nAgent Bricks| D[Delta Table\nExtracted Fields]
+    D -->|read by| E[Review App]
+    E -->|human expert\ncorrections| F[Destination Table\nReviewed Records]
+    F -->|feedback loop| C
+```
+
 ## How it works
 
 Each row in the source table contains:
