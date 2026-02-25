@@ -1,11 +1,17 @@
 import json
-import os
 
 import streamlit as st
 from streamlit_ace import st_ace
 from streamlit_pdf_viewer import pdf_viewer
 
-from databricks_utils import fetch_pdf_bytes, get_workspace_client, load_table
+import config
+from databricks_utils import (
+    ensure_dest_table,
+    fetch_pdf_bytes,
+    get_workspace_client,
+    load_table,
+    save_record,
+)
 
 
 def _strip_code_fence(s: str) -> str:
@@ -19,7 +25,6 @@ def _strip_code_fence(s: str) -> str:
         s = s[:-3]
     return s.strip()
 
-WAREHOUSE_ID = os.environ.get("SQL_WAREHOUSE_ID", "c741aaf0c2ad0829")
 
 st.set_page_config(
     page_title="Information Extraction Review",
@@ -31,10 +36,19 @@ st.title("Information Extraction Review")
 # --- Auto-load table on startup ---
 client = get_workspace_client()
 
+if "dest_table_ready" not in st.session_state:
+    with st.spinner("Initializing..."):
+        try:
+            ensure_dest_table(client)
+            st.session_state["dest_table_ready"] = True
+        except Exception as e:
+            st.error(f"Failed to initialize destination table: {e}")
+            st.stop()
+
 if "df" not in st.session_state:
     with st.spinner("Loading records..."):
         try:
-            st.session_state["df"] = load_table(client, WAREHOUSE_ID)
+            st.session_state["df"] = load_table(client, config.SQL_WAREHOUSE_ID)
             st.session_state["edits"] = {}
         except Exception as e:
             st.error(f"Failed to load table: {e}")
@@ -44,9 +58,9 @@ df = st.session_state["df"]
 edits: dict = st.session_state.setdefault("edits", {})
 
 # --- Record selector ---
-paths = df["path"].tolist()
+paths = df[config.COL_PDF_PATH].tolist()
 selected_path = st.selectbox("Select a record", paths, format_func=lambda p: p.split("/")[-1])
-row = df[df["path"] == selected_path].iloc[0]
+row = df[df[config.COL_PDF_PATH] == selected_path].iloc[0]
 
 # Persist edits for the previously selected record before switching
 if "current_path" in st.session_state and st.session_state["current_path"] != selected_path:
@@ -57,7 +71,7 @@ if "current_path" in st.session_state and st.session_state["current_path"] != se
 st.session_state["current_path"] = selected_path
 
 # Determine the JSON to show: prefer saved edit, fall back to table value
-raw_labels = row["labels"]
+raw_labels = row[config.COL_LABELS]
 if selected_path in edits:
     editor_value = edits[selected_path]
 else:
@@ -99,13 +113,35 @@ with col_json:
             auto_update=True,
         )
 
-        if st.button("Validate JSON"):
-            try:
-                json.loads(edited)
-                edits[selected_path] = edited
-                st.success("Valid JSON.")
-            except json.JSONDecodeError as e:
-                st.error(f"Invalid JSON: {e}")
+        btn_validate, btn_save = st.columns([1, 1])
+
+        with btn_validate:
+            if st.button("Validate JSON", use_container_width=True):
+                try:
+                    json.loads(edited)
+                    edits[selected_path] = edited
+                    st.success("Valid JSON.")
+                except json.JSONDecodeError as e:
+                    st.error(f"Invalid JSON: {e}")
+
+        with btn_save:
+            if st.button("Save", type="primary", use_container_width=True):
+                try:
+                    json.loads(edited)
+                except json.JSONDecodeError as e:
+                    st.error(f"Invalid JSON — fix before saving: {e}")
+                else:
+                    change_author = (
+                        st.context.headers.get("X-Forwarded-Email")
+                        or "local_dev_testing"
+                    )
+                    with st.spinner("Saving..."):
+                        try:
+                            save_record(client, selected_path, edited, change_author)
+                            edits[selected_path] = edited
+                            st.success("Saved.")
+                        except Exception as e:
+                            st.error(f"Save failed: {e}")
 
     with tab_raw:
-        st.text(row.get("raw_parsed") or "(empty)")
+        st.text(row.get(config.COL_RAW_CONTENT) or "(empty)")
