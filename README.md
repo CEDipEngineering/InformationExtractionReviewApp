@@ -9,11 +9,13 @@ flowchart TD
     A[PDF Files] -->|arrive at| B[UC Volume]
     B --> PARSE[ai_parse_document]
     PARSE --> C[Delta Table with Raw Parsed Content]
-    C -->|Information Extraction\nAgent Bricks| D[Delta Table with Extracted Fields]
+    C --> AGENT[Information Extraction\nAgent Bricks]
+    AGENT --> D[Delta Table with Extracted Fields]
     D -->|read by| E[Review App]
     E -->|human expert corrections| F[Destination Table with Reviewed Records]
     F -->|feedback loop| C
     click PARSE "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_parse_document" "ai_parse_document docs"
+    click AGENT "https://docs.databricks.com/aws/en/generative-ai/agent-bricks/key-info-extraction" "Information Extraction Agent Bricks docs"
 ```
 
 ## How it works
