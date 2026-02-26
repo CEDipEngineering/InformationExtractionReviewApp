@@ -36,7 +36,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The app connects to Databricks using the CLI profile defined by `DATABRICKS_CONFIG_PROFILE` (default: `e2`).
+The app connects to Databricks using the CLI profile defined by `DATABRICKS_CONFIG_PROFILE` (default: `fevm`).
 
 ## Configuration
 
@@ -44,13 +44,51 @@ All settings are in [`config.py`](config.py) and can be overridden via environme
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATABRICKS_CONFIG_PROFILE` | `e2` | CLI profile for local auth |
-| `SQL_WAREHOUSE_ID` | `c741aaf0c2ad0829` | SQL warehouse to query |
-| `TABLE_NAME` | `pedro_zanela.ia.input_ocr_gabarito` | Fully-qualified UC source table |
+| `DATABRICKS_CONFIG_PROFILE` | `fevm` | CLI profile for local auth |
+| `SQL_WAREHOUSE_ID` | `2c3975c5e258e46b` | SQL warehouse to query |
+| `TABLE_NAME` | `cedip_fevm_aws_classic_stable_catalog.ai.raw_parsed_content` | Fully-qualified UC source table |
 | `COL_PDF_PATH` | `path` | Column with the UC Volume PDF path |
 | `COL_LABELS` | `labels` | Column with the extraction JSON |
 | `COL_RAW_CONTENT` | `raw_parsed` | Column with the raw text parse |
-| `DEST_TABLE_NAME` | `cedip.ai.output_ocr_feedback` | Destination table for reviewed records |
+| `DEST_TABLE_NAME` | `cedip_fevm_aws_classic_stable_catalog.ai.reviewed_records` | Destination table for reviewed records |
+
+## Repository layout
+
+```
+InformationExtractionReviewApp/
+├── databricks.yml                  # Databricks Asset Bundle — variables, targets, fevm profile
+├── resources/
+│   ├── pipeline.yml                # Lakeflow pipeline: ai_parse_document → raw_parsed_content
+│   └── app.yml                     # Databricks App resource
+├── src/
+│   ├── pipelines/
+│   │   └── parse_pdfs/
+│   │       └── transformations/
+│   │           └── parse_pdfs.sql  # SDP streaming table definition
+│   └── validation/
+│       └── validate_against_reference.py  # Demo notebook: compare parsed output vs Excel
+├── app.py                          # Streamlit review app
+├── app.yaml                        # App startup command + env vars (deployed)
+├── config.py                       # Runtime configuration (env-var driven)
+├── databricks_utils.py             # Databricks SDK helpers
+└── requirements.txt                # Python dependencies
+```
+
+### Deploying the full pipeline
+
+```bash
+# Validate the bundle
+databricks bundle validate -t dev
+
+# Deploy pipeline + app to the fevm workspace
+databricks bundle deploy -t dev
+
+# Trigger a parse run (picks up PDFs from the volume subfolder)
+databricks bundle run parse_pipeline -t dev
+
+# Start the review app
+databricks bundle run review_app -t dev
+```
 
 ## Deployment
 

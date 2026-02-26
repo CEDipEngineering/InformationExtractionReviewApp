@@ -208,5 +208,4 @@ __marimo__/
 
 .ai-dev-kit/
 .claude/
-.env.example
-.mcp.json
+.mcp*
