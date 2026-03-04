@@ -25,17 +25,26 @@ flowchart LR
 ## Deploy
 
 ```bash
-# Validate
+# 1. Validate and deploy all resources
 databricks bundle validate -t dev
-
-# Deploy all resources (pipelines + app)
 databricks bundle deploy -t dev
 
-# Run pipelines in order
+# 2. Run the parse pipeline to populate raw_parsed_content
 databricks bundle run parse_pipeline -t dev
+```
+
+**3. Create the Agent Bricks Information Extraction agent** — this is a manual step in the Databricks UI.
+Follow the instructions in [agent-bricks-config.md](agent-bricks-config.md), then set the deployed endpoint name
+as the `endpoint_name` variable in `databricks.yml`.
+
+```bash
+# 4. Re-deploy so the extract_pipeline picks up the updated endpoint_name
+databricks bundle deploy -t dev
+
+# 5. Run the extraction pipeline
 databricks bundle run extract_pipeline -t dev
 
-# Start review app
+# 6. Start the review app
 databricks bundle run review_app -t dev
 ```
 
