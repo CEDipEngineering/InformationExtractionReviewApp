@@ -9,7 +9,10 @@ variables:
     description: "Unity Catalog catalog name"
     default: "cedip_fevm_aws_classic_stable_catalog"
   schema:
-    description: "Unity Catalog schema name"
+    description: "Schema for reads (source tables)"
+    default: "ai"
+  write_schema:
+    description: "Schema for pipeline output tables"
     default: "ai"
   pdf_folder_path:
     description: "Full volume path to the folder that contains the PDFs to process"
@@ -18,8 +21,16 @@ variables:
     description: "SQL warehouse ID for the app and pipeline"
     default: "2c3975c5e258e46b"
   endpoint_name:
-    description: "Agent Bricks model serving endpoint for information extraction (ai_query)"
+    description: "Model serving endpoint for information extraction (ai_query)"
     default: "kie-76e4b503-endpoint"
+
+  # Tags — change values here to apply across all resources
+  tag_project:
+    description: "Tag: project name applied to all resources"
+    default: "information-extraction"
+  tag_env:
+    description: "Tag: environment (defaults to bundle target name)"
+    default: ${bundle.target}
 
 targets:
   dev:
@@ -32,3 +43,5 @@ targets:
     mode: production
     workspace:
       profile: fevm
+    variables:
+      write_schema: ai_prod

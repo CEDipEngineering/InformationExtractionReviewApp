@@ -1,0 +1,38 @@
+resources:
+  jobs:
+    extraction_job:
+      name: "[${bundle.target}] Information Extraction"
+
+      tags:
+        env: ${var.tag_env}
+        project: ${var.tag_project}
+
+      queue:
+        enabled: true
+
+      performance_target: PERFORMANCE_OPTIMIZED
+
+      environments:
+        - environment_key: docling_env
+          spec:
+            environment_version: "5"
+            dependencies:
+              - docling
+
+      tasks:
+        - task_key: parse_pdfs
+          environment_key: docling_env
+          notebook_task:
+            notebook_path: ../src/pipelines/parse_pdfs/parse_pdfs_notebook.py
+            source: WORKSPACE
+            base_parameters:
+              pdf_folder_path: ${var.pdf_folder_path}
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              write_schema: ${var.write_schema}
+
+        - task_key: extract_fields
+          depends_on:
+            - task_key: parse_pdfs
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.extract_pipeline.id}

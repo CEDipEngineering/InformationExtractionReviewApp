@@ -1,6 +1,6 @@
 # Information Extraction Review App
 
-Automates structured data extraction from financial PDFs using Databricks Agent Bricks, then provides a Streamlit app for human review and correction.
+Automates structured data extraction from financial PDFs using docling + a DSPy/MLflow agent, then provides a Streamlit app for human review and correction.
 
 ## Pipeline
 
@@ -17,10 +17,10 @@ flowchart LR
 
 | Step | Resource | Output table |
 |---|---|---|
-| 1. OCR & parse | `parse_pipeline` | `raw_parsed_content` |
-| 2. Field extraction | `extract_pipeline` | `extracted_content` |
+| 1. OCR & parse | `parse_pipeline` (docling) | `raw_parsed_content` |
+| 2. Field extraction | `extract_pipeline` (ai_query) | `extracted_content` |
 | 3. Human review | Streamlit app | `reviewed_records` |
-| 4. Feedback loop | — | `reviewed_records` feeds back into Agent Bricks to improve the extraction model |
+| 4. Feedback loop | — | `reviewed_records` feeds back to improve the extraction agent |
 
 ## Deploy
 
@@ -29,13 +29,13 @@ flowchart LR
 databricks bundle validate -t dev
 databricks bundle deploy -t dev
 
-# 2. Run the parse pipeline to populate raw_parsed_content
+# 2. Run the parse pipeline
 databricks bundle run parse_pipeline -t dev
 ```
 
-**3. Create the Agent Bricks Information Extraction agent** — this is a manual step in the Databricks UI.
-Follow the instructions in [agent-bricks-config.md](agent-bricks-config.md), then set the deployed endpoint name
-as the `endpoint_name` variable in `databricks.yml`.
+**3. Deploy the extraction agent** — run the `src/agents/extractor/driver.py` notebook on Databricks.
+It logs, registers, and deploys the DSPy/MLflow agent as a model serving endpoint.
+Copy the printed endpoint name into `databricks.yml` → `endpoint_name`.
 
 ```bash
 # 4. Re-deploy so the extract_pipeline picks up the updated endpoint_name
@@ -68,7 +68,7 @@ Settings live in [`config.py`](config.py) and are overridable via environment va
 | `TABLE_NAME` | `cedip_fevm_aws_classic_stable_catalog.ai.extracted_content` |
 | `DEST_TABLE_NAME` | `cedip_fevm_aws_classic_stable_catalog.ai.reviewed_records` |
 
-Bundle variables (`databricks.yml`) control catalog, schema, PDF volume path, warehouse, and Agent Bricks endpoint name.
+Bundle variables (`databricks.yml`) control catalog, schema, PDF volume path, warehouse, and agent endpoint name.
 
 ## Repository layout
 
@@ -79,11 +79,17 @@ Bundle variables (`databricks.yml`) control catalog, schema, PDF volume path, wa
 │   ├── extract_pipeline.yml                # extract_pipeline definition
 │   └── app.yml                             # Databricks App resource
 ├── src/
+│   ├── agents/
+│   │   └── extractor/
+│   │       ├── agent.py                    # DSPy + MLflow pyfunc extraction agent
+│   │       └── driver.py                   # Notebook: log → register → deploy agent
 │   ├── pipelines/
 │   │   ├── parse_pdfs/transformations/
-│   │   │   └── parse_pdfs.sql              # ai_parse_document → raw_parsed_content
+│   │   │   └── parse_pdfs_docling.py       # docling (RapidOCR) → raw_parsed_content
 │   │   └── extract_fields/transformations/
-│   │       └── extract_fields.sql          # ai_query (Agent Bricks) → extracted_content
+│   │       └── extract_fields.py           # ai_query → extracted_content
+│   ├── tests/
+│   │   └── test_docling.py                 # Smoke test for docling on Databricks
 │   └── validation/
 │       ├── evaluate_extraction.py          # Accuracy evaluation vs Excel ground truth
 │       └── validate_against_reference.py   # Field-level comparison notebook

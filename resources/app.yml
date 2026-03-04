@@ -3,5 +3,4 @@ resources:
     review_app:
       name: "info-extraction-${bundle.target}"
       description: "Streamlit app for reviewing and correcting information extraction output"
-      # Source code is the project root (one level up from resources/)
       source_code_path: ..

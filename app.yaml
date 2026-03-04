@@ -9,6 +9,6 @@ env:
   - name: SQL_WAREHOUSE_ID
     value: "2c3975c5e258e46b"
   - name: TABLE_NAME
-    value: "cedip_fevm_aws_classic_stable_catalog.ai.raw_parsed_content"
+    value: "cedip_fevm_aws_classic_stable_catalog.ai.extracted_content"
   - name: DEST_TABLE_NAME
     value: "cedip_fevm_aws_classic_stable_catalog.ai.reviewed_records"

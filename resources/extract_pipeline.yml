@@ -4,19 +4,22 @@ resources:
       name: "[${bundle.target}] Extract Financial Fields"
 
       catalog: ${var.catalog}
-      target: ${var.schema}
+      schema: ${var.write_schema}
 
       serverless: true
 
       libraries:
-        - glob:
-            include: ../src/pipelines/extract_fields/transformations/**
-      root_path: ../src/pipelines/extract_fields
+        - notebook:
+            path: ../src/pipelines/extract_fields/transformations/extract_fields.py
 
       configuration:
         endpoint_name: ${var.endpoint_name}
-        # Full table name of the parse pipeline output; resolved at deploy time.
         source_table: ${var.catalog}.${var.schema}.raw_parsed_content
 
       continuous: false
-      channel: PREVIEW
+      channel: PREVIEW  # Required for ai_query against custom model serving endpoints
+
+      tags:
+        env: ${var.tag_env}
+        project: ${var.tag_project}
+        data_processing_step: extraction
