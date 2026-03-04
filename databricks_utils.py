@@ -56,7 +56,9 @@ def load_table(_client: WorkspaceClient, warehouse_id: str) -> pd.DataFrame:
 
 @st.cache_data
 def fetch_pdf_bytes(_client: WorkspaceClient, volume_path: str) -> bytes:
-    response = _client.files.download(volume_path)
+    # DLT stores paths as "dbfs:/Volumes/..."; the Files API expects "/Volumes/..."
+    api_path = volume_path.removeprefix("dbfs:")
+    response = _client.files.download(api_path)
     return response.contents.read()
 
 

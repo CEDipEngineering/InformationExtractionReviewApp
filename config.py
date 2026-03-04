@@ -24,7 +24,7 @@ SQL_WAREHOUSE_ID: str = os.environ.get("SQL_WAREHOUSE_ID", "2c3975c5e258e46b")
 # ---------------------------------------------------------------------------
 # Source table
 # ---------------------------------------------------------------------------
-TABLE_NAME: str = os.environ.get("TABLE_NAME", "cedip_fevm_aws_classic_stable_catalog.ai.raw_parsed_content")
+TABLE_NAME: str = os.environ.get("TABLE_NAME", "cedip_fevm_aws_classic_stable_catalog.ai.extracted_content")
 
 # ---------------------------------------------------------------------------
 # Destination table (writeback)
@@ -35,8 +35,8 @@ DEST_TABLE_NAME: str = os.environ.get("DEST_TABLE_NAME", "cedip_fevm_aws_classic
 # Column that holds the path to the PDF file inside a UC Volume
 COL_PDF_PATH: str = os.environ.get("COL_PDF_PATH", "path")
 
-# Column that holds the JSON extraction output (may be wrapped in code fences)
-COL_LABELS: str = os.environ.get("COL_LABELS", "labels")
+# Column that holds the JSON extraction output (VARIANT from Agent Bricks)
+COL_LABELS: str = os.environ.get("COL_LABELS", "extracted")
 
 # Column that holds the raw text parse of the PDF
 COL_RAW_CONTENT: str = os.environ.get("COL_RAW_CONTENT", "raw_parsed")

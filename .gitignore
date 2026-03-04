@@ -209,3 +209,4 @@ __marimo__/
 .ai-dev-kit/
 .claude/
 .mcp*
+.vscode

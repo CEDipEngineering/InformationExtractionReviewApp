@@ -98,7 +98,7 @@ with col_pdf:
 
 with col_json:
     st.subheader("Extraction Output")
-    tab_json, tab_raw = st.tabs(["JSON Editor", "Raw Parse"])
+    tab_json, tab_raw = st.tabs(["JSON Editor", "Intermediate OCR"])
 
     with tab_json:
         edited = st_ace(
