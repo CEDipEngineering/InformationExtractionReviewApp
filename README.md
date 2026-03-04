@@ -12,6 +12,7 @@ flowchart LR
     D --> E[extracted_content]
     E --> F[Review App]
     F --> G[reviewed_records]
+    G -->|feedback loop| D
 ```
 
 | Step | Resource | Output table |
@@ -19,6 +20,7 @@ flowchart LR
 | 1. OCR & parse | `parse_pipeline` | `raw_parsed_content` |
 | 2. Field extraction | `extract_pipeline` | `extracted_content` |
 | 3. Human review | Streamlit app | `reviewed_records` |
+| 4. Feedback loop | — | `reviewed_records` feeds back into Agent Bricks to improve the extraction model |
 
 ## Deploy
 
