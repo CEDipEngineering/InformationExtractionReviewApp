@@ -6,9 +6,9 @@ Automates structured data extraction from financial PDFs using Databricks Agent 
 
 ```mermaid
 flowchart LR
-    A[PDF Files\nUC Volume] --> B[parse_pipeline\nai_parse_document]
+    A[UC Volume] --> B[parse_pipeline]
     B --> C[raw_parsed_content]
-    C --> D[extract_pipeline\nAgent Bricks KIE]
+    C --> D[extract_pipeline]
     D --> E[extracted_content]
     E --> F[Review App]
     F --> G[reviewed_records]
