@@ -8,11 +8,10 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 import io
-import os
-from datetime import datetime
+import pandas as pd
 
-from pyspark.sql.types import StringType, StructField, StructType, TimestampType
-from pyspark.sql.functions import col
+from pyspark.sql.types import StringType, StructType, StructField
+from pyspark.sql.functions import col, when, to_json, expr, current_timestamp, pandas_udf, regexp_replace
 
 # COMMAND ----------
 
@@ -22,85 +21,142 @@ dbutils.widgets.text("schema", "ai")
 dbutils.widgets.text("write_schema", "ai")
 
 pdf_folder_path = dbutils.widgets.get("pdf_folder_path")
-catalog        = dbutils.widgets.get("catalog")
-schema         = dbutils.widgets.get("schema")
-write_schema   = dbutils.widgets.get("write_schema")
-dest_table     = f"{catalog}.{write_schema}.raw_parsed_content"
+catalog         = dbutils.widgets.get("catalog")
+schema          = dbutils.widgets.get("schema")
+write_schema    = dbutils.widgets.get("write_schema")
+dest_table      = f"{catalog}.{write_schema}.raw_parsed_content"
 
 print(f"Source : {pdf_folder_path}")
 print(f"Dest   : {dest_table}")
 
 # COMMAND ----------
 
-SUPPORTED_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
+SUPPORTED_EXTS_PATTERN = r"(?i)\.(pdf|jpg|jpeg|png|docx?)$"
 
-all_paths = {
-    os.path.join(pdf_folder_path, fname)
-    for fname in os.listdir(pdf_folder_path)
-    if os.path.splitext(fname)[1].lower() in SUPPORTED_EXTS
-}
-
-# Skip files already written to the destination table
-try:
-    already_parsed = {
-        row.path
-        for row in spark.table(dest_table).select("path").collect()
-    }
-except Exception:
-    already_parsed = set()  # destination table doesn't exist yet
-
-file_paths = sorted(all_paths - already_parsed)
-
-print(f"Total files  : {len(all_paths)}")
-print(f"Already done : {len(already_parsed)}")
-print(f"To process   : {len(file_paths)}")
-
-# COMMAND ----------
-
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.document import DocumentStream
-from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
-from docling.document_converter import DocumentConverter, PdfFormatOption
-
-opts = PdfPipelineOptions()
-opts.do_ocr = True
-opts.ocr_options = TesseractCliOcrOptions(force_full_page_ocr=True)
-opts.do_table_structure = False  # keep TableFormer disabled to reduce memory
-
-converter = DocumentConverter(
-    format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+# Read all supported files from the Volume as binary.
+# Normalize path: strip the "dbfs:" prefix that binaryFile format adds,
+# so paths stay consistent with any existing "/Volumes/..." entries in dest_table.
+all_files_df = (
+    spark.read.format("binaryFile")
+    .load(pdf_folder_path)
+    .filter(col("path").rlike(SUPPORTED_EXTS_PATTERN))
+    .withColumn("path", regexp_replace(col("path"), r"^dbfs:", ""))
+    .select("path", "content")
 )
 
-# COMMAND ----------
+# Skip files that were already successfully parsed
+try:
+    already_parsed_df = spark.table(dest_table).select("path")
+    files_to_process_df = all_files_df.join(already_parsed_df, on="path", how="left_anti")
+except Exception:
+    files_to_process_df = all_files_df  # dest table doesn't exist yet
 
-rows = []
-for path in file_paths:
-    try:
-        with open(path, "rb") as f:
-            content = f.read()
-        stream = DocumentStream(name="doc.pdf", stream=io.BytesIO(content))
-        md = converter.convert(stream).document.export_to_markdown()
-        print(f"OK  {path}  ({len(md)} chars)")
-    except Exception as e:
-        md = f"PARSE_ERROR: {e}"
-        print(f"ERR {path}  {e}")
-    rows.append({"path": path, "raw_parsed": md, "ingested_at": datetime.now()})
+total      = all_files_df.count()
+to_process = files_to_process_df.count()
 
-print(f"\nProcessed {len(rows)} files")
+print(f"Total files  : {total}")
+print(f"Already done : {total - to_process}")
+print(f"To process   : {to_process}")
 
 # COMMAND ----------
 
-output_schema = StructType([
-    StructField("path",        StringType(),    True),
-    StructField("raw_parsed",  StringType(),    True),
-    StructField("ingested_at", TimestampType(), True),
-])
+# Step 1: Docling + Tesseract via Pandas UDF (primary).
+# Runs distributed across workers; Tesseract is a pre-installed system binary
+# on Databricks nodes so no extra ML model downloads are needed.
+@pandas_udf(StringType())
+def docling_tesseract_udf(content_series: pd.Series) -> pd.Series:
+    import io
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
+    from docling.datamodel.document import DocumentStream
 
-if rows:
-    output_df = spark.createDataFrame(rows, schema=output_schema)
+    opts = PdfPipelineOptions()
+    opts.do_ocr = True
+    opts.ocr_options = TesseractCliOcrOptions(force_full_page_ocr=True)
+    opts.do_table_structure = False
+
+    converter = DocumentConverter(
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+    )
+
+    results = []
+    for raw_bytes in content_series:
+        try:
+            stream = DocumentStream(name="doc.pdf", stream=io.BytesIO(bytes(raw_bytes)))
+            md = converter.convert(stream).document.export_to_markdown()
+        except Exception as e:
+            md = f"PARSE_ERROR: {e}"
+        results.append(md)
+    return pd.Series(results)
+
+num_partitions = min(to_process, 16) if to_process > 0 else 1
+docling_attempted_df = (
+    files_to_process_df
+    .repartition(num_partitions)
+    .withColumn("raw_parsed", docling_tesseract_udf(col("content")))
+    .select("path", "content", "raw_parsed")
+)
+
+docling_success_df = docling_attempted_df.filter(~col("raw_parsed").startswith("PARSE_ERROR:")).select("path", "raw_parsed")
+docling_failed_df  = docling_attempted_df.filter(col("raw_parsed").startswith("PARSE_ERROR:")).select("path", "content")
+
+docling_success_count = docling_success_df.count()
+docling_failed_count  = docling_failed_df.count()
+
+print(f"Docling+Tesseract succeeded : {docling_success_count}")
+print(f"Docling+Tesseract failed    : {docling_failed_count}")
+
+# COMMAND ----------
+
+# Step 2: ai_parse_document fallback (Databricks built-in, serverless-friendly).
+# failOnError => false returns a result with an error field instead of throwing.
+# TRY() is an additional safety net in case the function still raises.
+if docling_failed_count > 0:
+    ai_attempted_df = (
+        docling_failed_df
+        .withColumn(
+            "_ai_result",
+            expr("TRY(ai_parse_document(content, map('failOnError', 'false')))")
+        )
+        .withColumn(
+            "raw_parsed",
+            when(col("_ai_result").isNotNull(), to_json(col("_ai_result"))).otherwise(None)
+        )
+        .drop("_ai_result")
+        .select("path", "raw_parsed")
+    )
+else:
+    ai_attempted_df = spark.createDataFrame(
+        [],
+        schema=StructType([
+            StructField("path",       StringType(), True),
+            StructField("raw_parsed", StringType(), True),
+        ])
+    )
+
+ai_success_count = ai_attempted_df.filter(col("raw_parsed").isNotNull()).count()
+ai_failed_count  = ai_attempted_df.filter(col("raw_parsed").isNull()).count()
+
+print(f"ai_parse_document succeeded : {ai_success_count}")
+print(f"ai_parse_document failed    : {ai_failed_count}")
+
+# COMMAND ----------
+
+# Combine both result sets, drop nulls, and write incrementally
+combined_df = (
+    docling_success_df.union(
+        ai_attempted_df.filter(col("raw_parsed").isNotNull())
+    )
+    .withColumn("ingested_at", current_timestamp())
+)
+
+rows_to_write = combined_df.count()
+print(f"Rows to write: {rows_to_write}")
+
+if rows_to_write > 0:
     (
-        output_df
-        .filter(~col("raw_parsed").startswith("PARSE_ERROR:"))
+        combined_df
         .write.format("delta")
         .mode("append")
         .saveAsTable(dest_table)

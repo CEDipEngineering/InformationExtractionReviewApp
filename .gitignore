@@ -210,3 +210,4 @@ __marimo__/
 .claude/
 .mcp*
 .vscode
+.databricks
