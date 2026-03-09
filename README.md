@@ -6,10 +6,10 @@ Automates structured data extraction from Brazilian financial PDFs (Balanço Pat
 
 ```mermaid
 flowchart LR
-    A[UC Volume\nPDFs/images] --> B[parse_pdfs\nDocling+Tesseract]
+    A["UC Volume (PDFs/images)"] --> B["parse_pdfs (Docling+Tesseract)"]
     B --> C[raw_parsed_content]
-    D[deploy_agent\nMLflow → UC → Endpoint] --> E[extraction-agent-endpoint]
-    C --> F[extract_fields\nDLT ai_query]
+    D["deploy_agent (MLflow → UC → Endpoint)"] --> E[extraction-agent-endpoint]
+    C --> F["extract_fields (DLT ai_query)"]
     E --> F
     F --> G[extracted_content]
     G --> H[Review App]
