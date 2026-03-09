@@ -2,7 +2,7 @@
 
 # COMMAND ----------
 
-%pip install docling
+%pip install "docling==2.37.0"
 dbutils.library.restartPython()
 
 # COMMAND ----------
@@ -45,10 +45,10 @@ all_files_df = (
 )
 
 # Skip files that were already successfully parsed
-try:
+if spark.catalog.tableExists(dest_table):
     already_parsed_df = spark.table(dest_table).select("path")
     files_to_process_df = all_files_df.join(already_parsed_df, on="path", how="left_anti")
-except Exception:
+else:
     files_to_process_df = all_files_df  # dest table doesn't exist yet
 
 total      = all_files_df.count()
@@ -66,6 +66,10 @@ print(f"To process   : {to_process}")
 @pandas_udf(StringType())
 def docling_tesseract_udf(content_series: pd.Series) -> pd.Series:
     import io
+    import os
+    # torch._dynamo fails to resolve the cache directory in Spark worker environments.
+    # Pre-setting this env var bypasses the default_cache_dir() call at torch import time.
+    os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", "/tmp/torch_inductor_cache")
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions

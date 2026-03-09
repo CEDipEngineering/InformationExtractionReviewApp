@@ -17,7 +17,15 @@ resources:
           spec:
             environment_version: "5"
             dependencies:
-              - docling
+              - docling==2.37.0
+
+        - environment_key: agent_env
+          spec:
+            environment_version: "5"
+            dependencies:
+              - dspy-ai
+              - langchain-databricks
+              - databricks-agents
 
       tasks:
         - task_key: parse_pdfs
@@ -31,8 +39,15 @@ resources:
               schema: ${var.schema}
               write_schema: ${var.write_schema}
 
+        - task_key: deploy_agent
+          environment_key: agent_env
+          notebook_task:
+            notebook_path: ../src/agents/extractor/driver.py
+            source: WORKSPACE
+
         - task_key: extract_fields
           depends_on:
             - task_key: parse_pdfs
+            - task_key: deploy_agent
           pipeline_task:
             pipeline_id: ${resources.pipelines.extract_pipeline.id}

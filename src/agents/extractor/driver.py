@@ -13,18 +13,15 @@
 
 # COMMAND ----------
 
-%pip install dspy-ai langchain-databricks databricks-agents "mlflow>=3.0"
-dbutils.library.restartPython()
-
-# COMMAND ----------
-
 import mlflow
-from databricks import agents
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service import serving
 
-CATALOG       = "cedip_fevm_aws_classic_stable_catalog"
-SCHEMA        = "ai"
-MODEL_NAME    = "extraction_agent"
-UC_MODEL_NAME = f"{CATALOG}.{SCHEMA}.{MODEL_NAME}"
+CATALOG        = "cedip_fevm_aws_classic_stable_catalog"
+SCHEMA         = "ai"
+MODEL_NAME     = "extraction_agent"
+UC_MODEL_NAME  = f"{CATALOG}.{SCHEMA}.{MODEL_NAME}"
+ENDPOINT_NAME  = "extraction-agent-endpoint"
 
 # Path to agent.py relative to this notebook's directory
 AGENT_FILE = "agent.py"
@@ -82,18 +79,30 @@ print(f"Registered version: {registered.version}")
 # ---------------------------------------------------------------------------
 # Step 3 — Deploy as a serverless Model Serving endpoint
 # ---------------------------------------------------------------------------
-deployment = agents.deploy(
-    model_name=UC_MODEL_NAME,
-    model_version=registered.version,
+w = WorkspaceClient()
+
+served_entity = serving.ServedEntityInput(
+    entity_name=UC_MODEL_NAME,
+    entity_version=str(registered.version),
+    workload_size="Small",
     scale_to_zero_enabled=True,
 )
+config = serving.EndpointCoreConfigInput(served_entities=[served_entity])
+
+try:
+    w.serving_endpoints.get(ENDPOINT_NAME)
+    # Endpoint exists — update to new model version
+    w.serving_endpoints.update_config(
+        name=ENDPOINT_NAME,
+        served_entities=[served_entity],
+    ).result()
+    print(f"Updated endpoint: {ENDPOINT_NAME}")
+except Exception:
+    # Endpoint does not exist — create it
+    w.serving_endpoints.create(name=ENDPOINT_NAME, config=config).result()
+    print(f"Created endpoint: {ENDPOINT_NAME}")
 
 print()
 print("=" * 60)
-print(f"  Endpoint name : {deployment.endpoint_name}")
+print(f"  Endpoint name : {ENDPOINT_NAME}")
 print("=" * 60)
-print()
-print("Next steps:")
-print(f"  1. Copy the endpoint name above into databricks.yml → endpoint_name")
-print(f"  2. Run: databricks bundle deploy -t dev")
-print(f"  3. Run: databricks bundle run extract_pipeline -t dev")

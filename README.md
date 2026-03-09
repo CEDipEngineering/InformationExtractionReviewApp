@@ -1,52 +1,47 @@
 # Information Extraction Review App
 
-Automates structured data extraction from financial PDFs using docling + a DSPy/MLflow agent, then provides a Streamlit app for human review and correction.
+Automates structured data extraction from Brazilian financial PDFs (Balanço Patrimonial + DRE) using Docling + a DSPy/MLflow agent, then provides a Streamlit app for human review and correction.
 
 ## Pipeline
 
 ```mermaid
 flowchart LR
-    A[UC Volume] --> B[parse_pipeline]
+    A[UC Volume\nPDFs/images] --> B[parse_pdfs\nDocling+Tesseract]
     B --> C[raw_parsed_content]
-    C --> D[extract_pipeline]
-    D --> E[extracted_content]
-    E --> F[Review App]
-    F --> G[reviewed_records]
-    G -->|feedback loop| D
+    D[deploy_agent\nMLflow → UC → Endpoint] --> E[extraction-agent-endpoint]
+    C --> F[extract_fields\nDLT ai_query]
+    E --> F
+    F --> G[extracted_content]
+    G --> H[Review App]
+    H --> I[reviewed_records]
 ```
 
-| Step | Resource | Output table |
-|---|---|---|
-| 1. OCR & parse | `parse_pipeline` (docling) | `raw_parsed_content` |
-| 2. Field extraction | `extract_pipeline` (ai_query) | `extracted_content` |
-| 3. Human review | Streamlit app | `reviewed_records` |
-| 4. Feedback loop | — | `reviewed_records` feeds back to improve the extraction agent |
+| Step | Job task | Resource | Output |
+|---|---|---|---|
+| 1. OCR & parse | `parse_pdfs` | `parse_pdfs_notebook.py` (Docling+Tesseract → `ai_parse_document` fallback) | `raw_parsed_content` |
+| 2. Deploy agent | `deploy_agent` | `driver.py` (MLflow log → UC register → Model Serving endpoint) | `extraction-agent-endpoint` |
+| 3. Field extraction | `extract_fields` | `extract_pipeline` DLT (`ai_query`) | `extracted_content` |
+| 4. Human review | — | Streamlit app | `reviewed_records` |
+
+`parse_pdfs` and `deploy_agent` run in parallel; `extract_fields` depends on both.
 
 ## Deploy
 
 ```bash
-# 1. Validate and deploy all resources
+# Validate and deploy all bundle resources
 databricks bundle validate -t dev
 databricks bundle deploy -t dev
 
-# 2. Run the parse pipeline
-databricks bundle run parse_pipeline -t dev
-```
+# Run the full pipeline (parse → deploy agent → extract fields)
+databricks bundle run extraction_job -t dev
 
-**3. Deploy the extraction agent** — run the `src/agents/extractor/driver.py` notebook on Databricks.
-It logs, registers, and deploys the DSPy/MLflow agent as a model serving endpoint.
-Copy the printed endpoint name into `databricks.yml` → `endpoint_name`.
-
-```bash
-# 4. Re-deploy so the extract_pipeline picks up the updated endpoint_name
-databricks bundle deploy -t dev
-
-# 5. Run the extraction pipeline
-databricks bundle run extract_pipeline -t dev
-
-# 6. Start the review app
+# Start the review app
 databricks bundle run review_app -t dev
 ```
+
+Use `--profile=fevm` if your CLI profile is not set as default.
+
+For production, use `-t prod` (writes to `ai_prod` schema).
 
 ## Run locally
 
@@ -59,7 +54,18 @@ Requires a Databricks CLI profile (`fevm` by default) in `~/.databrickscfg`.
 
 ## Configuration
 
-Settings live in [`config.py`](config.py) and are overridable via environment variables.
+Bundle variables in [`databricks.yml`](databricks.yml) — override per target or at deploy time with `--var`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `catalog` | `cedip_fevm_aws_classic_stable_catalog` | Unity Catalog catalog |
+| `schema` | `ai` | Source schema (reads) |
+| `write_schema` | `ai` | Destination schema (writes); overridden to `ai_prod` in prod |
+| `pdf_folder_path` | `/Volumes/.../input_files/` | Volume folder containing PDFs |
+| `warehouse_id` | `2c3975c5e258e46b` | SQL warehouse for app and pipeline |
+| `endpoint_name` | `extraction-agent-endpoint` | Model Serving endpoint for `ai_query` |
+
+App runtime config lives in [`config.py`](config.py) and is overridable via environment variables:
 
 | Variable | Default |
 |---|---|
@@ -68,32 +74,33 @@ Settings live in [`config.py`](config.py) and are overridable via environment va
 | `TABLE_NAME` | `cedip_fevm_aws_classic_stable_catalog.ai.extracted_content` |
 | `DEST_TABLE_NAME` | `cedip_fevm_aws_classic_stable_catalog.ai.reviewed_records` |
 
-Bundle variables (`databricks.yml`) control catalog, schema, PDF volume path, warehouse, and agent endpoint name.
-
 ## Repository layout
 
 ```
-├── databricks.yml                          # Bundle: variables, targets (dev/prod)
+├── databricks.yml                              # Bundle: variables, targets (dev/prod)
 ├── resources/
-│   ├── pipeline.yml                        # parse_pipeline definition
-│   ├── extract_pipeline.yml                # extract_pipeline definition
-│   └── app.yml                             # Databricks App resource
+│   ├── job.yml                                 # extraction_job: parse_pdfs + deploy_agent + extract_fields
+│   ├── extract_pipeline.yml                    # extract_pipeline DLT definition
+│   └── app.yml                                 # Databricks App resource
 ├── src/
 │   ├── agents/
 │   │   └── extractor/
-│   │       ├── agent.py                    # DSPy + MLflow pyfunc extraction agent
-│   │       └── driver.py                   # Notebook: log → register → deploy agent
+│   │       ├── agent.py                        # DSPy ChainOfThought + MLflow pyfunc extraction agent
+│   │       └── driver.py                       # Notebook: log → register → deploy to Model Serving
 │   ├── pipelines/
-│   │   ├── parse_pdfs/transformations/
-│   │   │   └── parse_pdfs_docling.py       # docling (RapidOCR) → raw_parsed_content
+│   │   ├── parse_pdfs/
+│   │   │   ├── parse_pdfs_notebook.py          # Job task: Docling+Tesseract → ai_parse_document fallback
+│   │   │   └── transformations/
+│   │   │       └── parse_pdfs_docling.py       # DLT version (not used in job; kept for reference)
 │   │   └── extract_fields/transformations/
-│   │       └── extract_fields.py           # ai_query → extracted_content
+│   │       └── extract_fields.py               # DLT: ai_query(endpoint) → extracted_content
 │   ├── tests/
-│   │   └── test_docling.py                 # Smoke test for docling on Databricks
+│   │   └── test_docling.py                     # Smoke test for Docling on Databricks
 │   └── validation/
-│       ├── evaluate_extraction.py          # Accuracy evaluation vs Excel ground truth
-│       └── validate_against_reference.py   # Field-level comparison notebook
-├── app.py                                  # Streamlit review app
-├── config.py                               # Runtime config (env-var driven)
-└── databricks_utils.py                     # SDK helpers (query, save, fetch PDF bytes)
+│       ├── evaluate_extraction.py              # Field-level accuracy vs Excel ground truth (1% tolerance)
+│       └── validate_against_reference.py       # Side-by-side raw text vs Excel comparison
+├── app.py                                      # Streamlit review app
+├── config.py                                   # Runtime config (env-var driven)
+├── databricks_utils.py                         # SDK helpers (query, save, fetch PDF bytes)
+└── requirements.txt                            # Local/app dependencies
 ```

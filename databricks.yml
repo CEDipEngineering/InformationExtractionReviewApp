@@ -22,7 +22,7 @@ variables:
     default: "2c3975c5e258e46b"
   endpoint_name:
     description: "Model serving endpoint for information extraction (ai_query)"
-    default: "kie-76e4b503-endpoint"
+    default: "extraction-agent-endpoint"
 
   # Tags — change values here to apply across all resources
   tag_project:
@@ -43,5 +43,6 @@ targets:
     mode: production
     workspace:
       profile: fevm
+      root_path: "/Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}"
     variables:
       write_schema: ai_prod
