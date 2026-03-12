@@ -1,121 +1,292 @@
-# Agent Instructions
+# INSTRUCTIONS.md — Guia de Desenvolvimento Futuro
 
-This file is a guide for AI agents (Claude Code or similar) working on this project. Read it before making any changes.
+Este documento complementa o README.md com orientacoes praticas, decisoes arquiteturais e licoes aprendidas para quem for dar continuidade ao projeto.
 
-## Project in one sentence
+---
 
-Databricks Asset Bundle that extracts structured financial data from PDFs and serves a Streamlit review app. The full pipeline runs as a single Databricks Job.
+## 1. Decisoes Arquiteturais
 
-## Credentials and environment
+### Por que nao usamos Custom Model Serving Endpoint
 
-- **Databricks CLI profile**: `fevm`
-- **Workspace**: FEVM workspace (`fevm-cedip-fevm-aws-classic-stable.cloud.databricks.com`)
-- **Catalog**: `cedip_fevm_aws_classic_stable_catalog`
-- **Dev schema (reads + writes)**: `ai`
-- **Prod schema (writes)**: `ai_prod`
+A versao original do projeto registrava um modelo MLflow (`src/agents/extractor/agent.py`) como endpoint customizado (`extraction-agent-endpoint`). Esse modelo chamava a Foundation Model API (FMAPI) internamente via OpenAI SDK.
 
-Always check `databricks auth profiles | grep fevm` before running CLI commands.
+**Problema**: O ambiente de model serving do Databricks gera tokens de servico que **nao conseguem autenticar** contra a FMAPI. Resultado: erro `401 - Credential was not sent or was of an unsupported type for this API`. Isso nao e um bug do codigo — e uma limitacao do ambiente de model serving.
 
-## Deploy workflow
+**Solucao adotada**: Chamar a FMAPI diretamente via `ai_query()` dentro do DLT pipeline. A funcao `ai_query` e nativa do Spark SQL e gerencia autenticacao automaticamente.
+
+**Impacto**: Eliminamos a task `deploy_agent` do job (que registrava e servia o modelo), simplificando o pipeline de 4 para 3 tasks.
+
+> **Referencia**: O codigo do agente MLflow esta em `src/agents/extractor/agent.py` apenas como referencia historica. Nao edite nem tente registra-lo novamente.
+
+### Por que DLT com channel PREVIEW
+
+A funcao `ai_query()` com endpoints FMAPI so funciona no canal `PREVIEW` do DLT. Sem isso, o pipeline falha com erro de funcao nao reconhecida. Essa configuracao esta em `resources/extract_pipeline.yml`:
+
+```yaml
+channel: PREVIEW  # Required for ai_query against FMAPI endpoints
+```
+
+### Por que serverless no DLT
+
+O pipeline DLT usa `serverless: true` para evitar provisionar clusters dedicados. Isso tambem garante compatibilidade com `ai_query`.
+
+### Carregamento do schema via workspace path
+
+O arquivo `output_schema.json` (70+ campos financeiros) e carregado no DLT via `open(schema_ws_path)`, onde `schema_ws_path` e injetado como configuracao do pipeline apontando para o workspace filesystem:
+
+```yaml
+schema_ws_path: ${workspace.file_path}/src/agents/extractor/output_schema.json
+```
+
+**Nao use** `os.path.dirname(__file__)` — esse padrao nao funciona de forma confiavel no DLT serverless.
+
+### MERGE INTO para idempotencia
+
+Tanto o notebook `process_results` quanto a review app usam `MERGE INTO` com chave composta `(document_name, tipo_entidade, periodo)` para upserts. Isso garante que reprocessamentos nao dupliquem dados.
+
+---
+
+## 2. Fluxo de Desenvolvimento
+
+### Setup inicial
 
 ```bash
-# Deploy bundle resources
-databricks bundle deploy -t dev --profile=fevm
+# 1. Verificar Databricks CLI configurado com profile fevm
+databricks auth describe --profile fevm
 
-# Run the pipeline job (parse PDFs + deploy agent + extract fields)
-databricks bundle run extraction_job -t dev --profile=fevm
+# 2. Instalar dependencias do frontend
+cd review-app/frontend && npm install && cd ../..
 
-# Run the review app
-databricks bundle run review_app -t dev --profile=fevm
+# 3. Validar o bundle
+databricks bundle validate -t dev
 ```
 
-For production, replace `-t dev` with `-t prod`.
+### Ciclo de desenvolvimento
 
-## Job task graph
+```bash
+# 1. Fazer alteracoes no codigo
 
+# 2. Se alterou frontend: rebuild
+cd review-app/frontend && npm run build && cd ../..
+
+# 3. Deploy do bundle
+databricks bundle deploy -t dev
+
+# 4. Executar o job completo
+databricks bundle run extraction_job -t dev
+
+# 5. Ou executar uma task especifica (ex: apenas process_results)
+databricks bundle run extraction_job -t dev --task process_results
 ```
-parse_pdfs ──┐
-             ├──> extract_fields
-deploy_agent─┘
+
+### Build do frontend e obrigatorio antes do deploy
+
+O diretorio `review-app/frontend/dist/` esta no `.gitignore` mas e incluido no deploy via:
+
+```yaml
+# databricks.yml
+sync:
+  include:
+    - review-app/frontend/dist/**
 ```
 
-- `parse_pdfs` runs `src/pipelines/parse_pdfs/parse_pdfs_notebook.py` with `docling_env`
-- `deploy_agent` runs `src/agents/extractor/driver.py` with `agent_env`
-- `extract_fields` runs the `extract_pipeline` DLT pipeline
+Se esquecer o build, a app servira 404 no frontend.
 
-Both `parse_pdfs` and `deploy_agent` run in parallel; `extract_fields` waits for both.
+### Deploy da Review App
 
-## Key files to know
+Apos `databricks bundle deploy`, a app precisa ser iniciada/atualizada separadamente:
 
-| File | Purpose | Notes |
+```bash
+# Verificar se a app existe
+databricks apps get techfin-review-dev --profile fevm
+
+# Deploy do codigo da app
+databricks apps deploy techfin-review-dev \
+  --source-code-path /Workspace/Users/<user>/.bundle/techfin-ocr-balancos/dev/files/review-app \
+  --profile fevm
+```
+
+---
+
+## 3. Configuracao e Variaveis
+
+### Variaveis do bundle (`databricks.yml`)
+
+| Variavel | Onde e usada | Como alterar |
 |---|---|---|
-| `databricks.yml` | Bundle config, variables, dev/prod targets | Change defaults here |
-| `resources/job.yml` | Job task graph and environments | Edit when adding/changing tasks |
-| `resources/extract_pipeline.yml` | DLT extract pipeline | Uses `ai_query` against model serving endpoint |
-| `resources/app.yml` | Databricks App definition | Points to repo root |
-| `src/pipelines/parse_pdfs/parse_pdfs_notebook.py` | PDF OCR/parsing | Incremental; Docling primary, `ai_parse_document` fallback |
-| `src/agents/extractor/agent.py` | DSPy extraction agent | MLflow pyfunc wrapper |
-| `src/agents/extractor/driver.py` | Agent log/register/deploy | Runs as a job task |
-| `src/pipelines/extract_fields/transformations/extract_fields.py` | DLT field extraction | Calls `ai_query(endpoint_name, ...)` |
-| `app.py` | Streamlit review app | Reads `extracted_content`, writes `reviewed_records` |
-| `config.py` | Runtime config for the app | Overridable via env vars |
+| `catalog` | Todas as tasks + app | Mudar default ou override no target |
+| `write_schema` | Tabelas de saida | `ai` (dev), `ai_prod` (prod) |
+| `endpoint_name` | DLT pipeline + review app | Nome do endpoint FMAPI |
+| `warehouse_id` | Review app (Statement Execution API) | ID do SQL Warehouse |
+| `pdf_volume_path` | parse_pdfs + review app | Volume UC com PDFs de entrada |
 
-## Critical gotchas
+### Variaveis de ambiente da Review App (`app.yaml`)
 
-### Docling version pinning
-**Always use `docling==2.37.0`** — both in `%pip install` in the notebook and in `resources/job.yml` `docling_env` dependencies. Version 2.38.0+ introduces an `asr_pipeline` import that pulls in `transformers`/`torch` at module load time, which crashes Spark UDF workers.
+A app le suas configuracoes de `app.yaml` > `env`. Se alterar tabelas ou warehouse, atualize ambos `databricks.yml` (para o pipeline) e `app.yaml` (para a app).
 
-### torch._dynamo in Spark workers
-Even with 2.37.0, `docling-ibm-models` → `transformers` → `torch` import can fail because `torch._dynamo.__init__` calls `default_cache_dir()` which tries to resolve a path unavailable in Spark workers. Fix: set `TORCHINDUCTOR_CACHE_DIR` **inside the UDF body, before any docling import**:
+### Config padrao no codigo (`server/config.py`)
+
+O `config.py` tem defaults hardcoded que sao usados se as env vars nao estiverem definidas. Mantenha-os sincronizados com `app.yaml`:
+
 ```python
-os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", "/tmp/torch_inductor_cache")
+WAREHOUSE_ID = os.environ.get("WAREHOUSE_ID", "2c3975c5e258e46b")
+RESULTS_TABLE = os.environ.get("RESULTS_TABLE", "cedip_fevm_aws_classic_stable_catalog.ai.ocr_results")
 ```
 
-### Spark lazy evaluation and table existence checks
-Never use `try: spark.table(name)` to check if a table exists. `spark.table()` is lazy — it returns a DataFrame without executing, so the exception only surfaces later (outside the try block). Use:
-```python
-if spark.catalog.tableExists(dest_table):
+---
+
+## 4. Permissoes (Criticas)
+
+O Service Principal (SP) da Databricks App precisa de grants especificos. Sem eles, a app retorna 500 Internal Server Error.
+
+```sql
+-- Substituir <catalog>, <schema> e <sp-client-id> pelos valores reais
+-- SP client ID atual: 72092ac5-964f-40e1-91e6-f1d4f36480d7
+
+GRANT USE CATALOG ON CATALOG <catalog> TO `<sp-client-id>`;
+GRANT USE SCHEMA ON SCHEMA <catalog>.<schema> TO `<sp-client-id>`;
+GRANT SELECT ON TABLE <catalog>.<schema>.ocr_results TO `<sp-client-id>`;
+GRANT SELECT, MODIFY ON TABLE <catalog>.<schema>.ocr_corrections TO `<sp-client-id>`;
+GRANT READ_VOLUME ON VOLUME <catalog>.<schema>.techfin_raw_files TO `<sp-client-id>`;
 ```
 
-### Job environments vs %pip install
-When a notebook task has an `environment_key` in `job.yml`, Databricks Serverless enforces immutable package constraints. `%pip install` at the top of the notebook is **not needed** (and can fail). All dependencies go in the environment spec under `resources/job.yml`. See `docling_env` and `agent_env` for examples.
+Alem disso, o grupo `users` precisa de `CAN_USE` no SQL Warehouse para que a app consiga executar queries.
 
-### agents.deploy() is deprecated
-`databricks_agents.deploy()` from the `databricks-agents` SDK tries to enable legacy inference tables, which have been removed. Use `WorkspaceClient` + `serving.ServedEntityInput` directly (as in `driver.py`).
+**Dica**: Use o `client ID` do SP, nao o display name. Nomes como `app-1leomw techfin-review-dev` nao sao resolvidos pelo SQL GRANT.
 
-### parse_pdfs is incremental
-The notebook skips files already present in `raw_parsed_content`. On first run (or full reload) the table does not exist — the `spark.catalog.tableExists()` branch handles this correctly.
+---
 
-## Debugging a failed job run
+## 5. Modificando o Schema de Extracao
 
-1. Get the run ID from the CLI output or Databricks UI.
-2. Export notebook output:
-   ```bash
-   curl -H "Authorization: Bearer $TOKEN" \
-     "https://<host>/api/2.0/jobs/runs/export?run_id=<id>&views_to_export=CODE" \
-     | python3 -c "import sys,json,base64,urllib.parse; d=json.load(sys.stdin); [print(urllib.parse.unquote(base64.b64decode(v['content']).decode())) for v in d['views']]"
-   ```
-3. The output is JSON with `content` fields (base64 → URL-decoded cell outputs). Look for `PARSE_ERROR:` or Python tracebacks.
+O schema de campos financeiros esta em `src/agents/extractor/output_schema.json`. Para adicionar/modificar campos:
 
-## Adding a new pipeline step
+1. Edite o `output_schema.json` — cada campo tem nome, tipo e um extenso "de-para" com nomenclaturas alternativas
+2. **Nao precisa alterar o DLT pipeline** — ele carrega o schema dinamicamente
+3. Atualize `review-app/frontend/src/components/fieldDefinitions.ts` para que o frontend exiba o novo campo
+4. Atualize `review-app/server/routes/export.py` se o campo deve aparecer no Excel exportado
+5. Faca `databricks bundle deploy -t dev` para sincronizar o novo schema
 
-1. Create the transformation file under `src/pipelines/<step>/`.
-2. If it's a DLT pipeline, add a new `resources/<step>_pipeline.yml`.
-3. Add a task to `resources/job.yml` with appropriate `depends_on` and `environment_key`.
-4. Add the environment spec to `resources/job.yml` if new packages are required.
-5. Update `databricks.yml` variables if the step needs configurable params.
-6. Update this file and `README.md`.
+**Importante**: O `process_results` extrai apenas campos-chave (razao_social, cnpj, ativo_total, lucro_liquido) para colunas dedicadas. O restante fica no `extracted_json`. Se precisar de um novo campo como coluna dedicada, edite o notebook.
 
-## Modifying the extraction agent
+---
 
-The agent is a DSPy `ChainOfThought` module wrapped as an MLflow pyfunc model:
-- **Schema**: `src/agents/extractor/agent.py` — defines `FinancialExtraction` DSPy signature and `ExtractionAgent` pyfunc class.
-- **Deployment**: `src/agents/extractor/driver.py` — logs, registers to UC, creates/updates the Model Serving endpoint.
-- **Endpoint name**: controlled by `endpoint_name` variable in `databricks.yml`.
-- **DLT pipeline call**: `src/pipelines/extract_fields/transformations/extract_fields.py` uses `ai_query(spark.conf.get("endpoint_name"), ...)`.
+## 6. Adicionando Novos Passos ao Pipeline
 
-After changing `agent.py`, re-run the job (or just `deploy_agent` task) to push a new version.
+### Nova task no job
 
-## Evaluation
+1. Crie o notebook em `src/pipelines/<nome>/`
+2. Adicione a task em `resources/job.yml` com `depends_on` apropriado
+3. Use widgets do `dbutils` para parametros, com defaults que funcionem standalone
 
-Run `src/validation/evaluate_extraction.py` as a notebook to compare `extracted_content` against the Excel ground truth at `/Volumes/.../techfin_raw_files/ground_truth.xlsx`. Tolerance is 1% relative difference. Statuses: `exact`, `close`, `zero_both`, `wrong`, `missing_ex`, `missing_gt`.
+### Nova rota na Review App
+
+1. Crie o arquivo em `review-app/server/routes/`
+2. Registre o router em `review-app/app.py`
+3. Use `execute_sql()` de `server/db.py` para queries — ele gerencia a Statement Execution API
+4. Para componentes React, adicione em `review-app/frontend/src/components/`
+
+---
+
+## 7. Debugging e Troubleshooting
+
+### Pipeline falha: verificar cada task
+
+```bash
+# Ver status do job
+databricks bundle run extraction_job -t dev
+
+# Se uma task falhou, verificar logs no Databricks UI:
+# Jobs > [dev] TechFin OCR Balancos > Run > Task > Logs
+```
+
+### DLT pipeline falha com erro de ai_query
+
+- Verificar que `channel: PREVIEW` esta em `extract_pipeline.yml`
+- Verificar que o endpoint FMAPI existe: `databricks serving-endpoints get databricks-claude-3-7-sonnet --profile fevm`
+- Verificar que `serverless: true` esta habilitado
+
+### Review app retorna 500
+
+1. **Verificar permissoes do SP** (secao 4 acima)
+2. Verificar que o SQL Warehouse esta ativo (nao suspenso/terminado)
+3. Ver logs da app: `databricks apps get techfin-review-dev --profile fevm`
+
+### Frontend mostra 404 ou pagina em branco
+
+1. Verificar se o build foi feito: `ls review-app/frontend/dist/`
+2. Verificar `sync.include` em `databricks.yml`
+3. Refazer deploy: `npm run build && databricks bundle deploy -t dev`
+
+### process_results falha mas funciona standalone
+
+Pode ser cache de versao antiga do notebook. Solucao:
+
+```bash
+# Redeploy e executar novamente
+databricks bundle deploy -t dev
+databricks bundle run extraction_job -t dev --task process_results
+```
+
+### Upload/Reprocessamento da app falha com 401
+
+O `_call_ocr_endpoint` em `upload.py` faz chamada HTTP direta ao endpoint FMAPI. Se o token do SP nao tiver permissao no endpoint, falhara com 401. Verifique:
+- Se o OCR_ENDPOINT em `app.yaml` aponta para um endpoint valido
+- Se o SP tem permissao CAN_QUERY no endpoint
+
+---
+
+## 8. Producao
+
+### Diferenca entre dev e prod
+
+| Aspecto | dev | prod |
+|---|---|---|
+| `mode` | development | production |
+| `write_schema` | ai | ai_prod |
+| Nome do job | [dev] TechFin OCR... | [prod] TechFin OCR... |
+| Tabelas de saida | catalog.ai.* | catalog.ai_prod.* |
+
+### Deploy para producao
+
+```bash
+# 1. Build frontend
+cd review-app/frontend && npm run build && cd ../..
+
+# 2. Deploy
+databricks bundle deploy -t prod
+
+# 3. Executar
+databricks bundle run extraction_job -t prod
+
+# 4. Criar tabelas e grants no schema ai_prod (primeira vez)
+```
+
+### Consideracoes
+
+- O schema `ai_prod` precisa existir e ter grants equivalentes ao `ai`
+- A review app precisa de uma instancia separada para prod com `app.yaml` apontando para `ai_prod`
+- Considere configurar um schedule no job para execucao periodica
+
+---
+
+## 9. Diretorios de Referencia (Nao Editar)
+
+| Diretorio | Conteudo | Status |
+|---|---|---|
+| `ocr-agent/` | Versao anterior do agente | Referencia |
+| `old_app/` | App Streamlit + Docling + DSPy com DABs | Referencia |
+| `src/agents/extractor/agent.py` | MLflow PythonModel (tinha 401 auth) | Referencia |
+
+Esses diretorios existem como historico. A arquitetura atual nao depende deles.
+
+---
+
+## 10. Resultados Conhecidos
+
+Na ultima execucao completa do pipeline:
+- **parse_pdfs**: 25 PDFs processados com sucesso
+- **extract_fields**: 24/25 documentos extraidos (96% sucesso)
+- **process_results**: 30 linhas de resultado, 21 documentos distintos
+- **Review app**: Funcional em `https://techfin-review-dev-7474656914510817.aws.databricksapps.com`
+
+A taxa de extracao de 96% (1 falha em 25) e esperada — PDFs com layout muito incomum podem falhar. O campo `error_message` na tabela `extracted_content` mostra o motivo da falha.

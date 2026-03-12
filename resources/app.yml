@@ -1,7 +1,0 @@
-resources:
-  apps:
-    review_app:
-      name: "info-extraction-${bundle.target}"
-      description: "Streamlit app for reviewing and correcting information extraction output"
-      source_code_path: ..
-

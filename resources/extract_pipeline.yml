@@ -1,7 +1,7 @@
 resources:
   pipelines:
     extract_pipeline:
-      name: "[${bundle.target}] Extract Financial Fields"
+      name: "[${bundle.target}] TechFin Extract Financial Fields"
 
       catalog: ${var.catalog}
       schema: ${var.write_schema}
@@ -14,10 +14,11 @@ resources:
 
       configuration:
         endpoint_name: ${var.endpoint_name}
-        source_table: ${var.catalog}.${var.schema}.raw_parsed_content
+        source_table: ${var.catalog}.${var.write_schema}.raw_parsed_content
+        schema_ws_path: ${workspace.file_path}/src/agents/extractor/output_schema.json
 
       continuous: false
-      channel: PREVIEW  # Required for ai_query against custom model serving endpoints
+      channel: PREVIEW  # Required for ai_query against FMAPI endpoints
 
       tags:
         env: ${var.tag_env}

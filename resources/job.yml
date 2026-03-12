@@ -1,7 +1,7 @@
 resources:
   jobs:
     extraction_job:
-      name: "[${bundle.target}] Information Extraction"
+      name: "[${bundle.target}] TechFin OCR Balanços"
 
       tags:
         env: ${var.tag_env}
@@ -12,45 +12,29 @@ resources:
 
       performance_target: PERFORMANCE_OPTIMIZED
 
-      environments:
-        - environment_key: docling_env
-          spec:
-            environment_version: "5"
-            dependencies:
-              - docling==2.37.0
-
-        - environment_key: agent_env
-          spec:
-            environment_version: "5"
-            dependencies:
-              - dspy-ai
-              - langchain-databricks
-              - databricks-agents
-
       tasks:
         - task_key: parse_pdfs
-          environment_key: docling_env
           notebook_task:
             notebook_path: ../src/pipelines/parse_pdfs/parse_pdfs_notebook.py
             source: WORKSPACE
             base_parameters:
-              pdf_folder_path: ${var.pdf_folder_path}
+              pdf_volume_path: ${var.pdf_volume_path}
               catalog: ${var.catalog}
               schema: ${var.schema}
               write_schema: ${var.write_schema}
 
-        - task_key: deploy_agent
-          environment_key: agent_env
-          notebook_task:
-            notebook_path: ../src/agents/extractor/driver.py
-            source: WORKSPACE
-            base_parameters:
-              tag_project: ${var.tag_project}
-              tag_env: ${var.tag_env}
-
         - task_key: extract_fields
           depends_on:
             - task_key: parse_pdfs
-            - task_key: deploy_agent
           pipeline_task:
             pipeline_id: ${resources.pipelines.extract_pipeline.id}
+
+        - task_key: process_results
+          depends_on:
+            - task_key: extract_fields
+          notebook_task:
+            notebook_path: ../src/pipelines/process_results/process_results_notebook.py
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+              write_schema: ${var.write_schema}

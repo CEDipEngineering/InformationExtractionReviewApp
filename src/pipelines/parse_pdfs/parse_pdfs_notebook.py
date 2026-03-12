@@ -1,45 +1,51 @@
 # Databricks notebook source
+# =============================================================================
+# TechFin OCR — Parse PDFs with ai_parse_document
+# =============================================================================
+# Reads PDF files from a Unity Catalog Volume, parses them using the built-in
+# ai_parse_document function, extracts the text content, and writes the results
+# to a Delta table for downstream extraction.
+#
+# Parameters (injected via DABs job):
+#   pdf_volume_path — Full volume path to the PDF folder
+#   catalog         — Unity Catalog catalog name
+#   schema          — Schema for source reads
+#   write_schema    — Schema for output tables
+# =============================================================================
 
 # COMMAND ----------
 
-%pip install "docling==2.37.0"
-dbutils.library.restartPython()
+from pyspark.sql.functions import col, concat_ws, current_timestamp, expr, lit, when
+from pyspark.sql.functions import regexp_replace, regexp_extract
 
 # COMMAND ----------
 
-import io
-import pandas as pd
-
-from pyspark.sql.types import StringType, StructType, StructField
-from pyspark.sql.functions import col, when, to_json, expr, current_timestamp, pandas_udf, regexp_replace
-
-# COMMAND ----------
-
-dbutils.widgets.text("pdf_folder_path", "")
+dbutils.widgets.text("pdf_volume_path", "/Volumes/cedip_fevm_aws_classic_stable_catalog/ai/techfin_raw_files/input_files/")
 dbutils.widgets.text("catalog", "cedip_fevm_aws_classic_stable_catalog")
 dbutils.widgets.text("schema", "ai")
 dbutils.widgets.text("write_schema", "ai")
 
-pdf_folder_path = dbutils.widgets.get("pdf_folder_path")
+pdf_volume_path = dbutils.widgets.get("pdf_volume_path")
 catalog         = dbutils.widgets.get("catalog")
 schema          = dbutils.widgets.get("schema")
 write_schema    = dbutils.widgets.get("write_schema")
 dest_table      = f"{catalog}.{write_schema}.raw_parsed_content"
 
-print(f"Source : {pdf_folder_path}")
+print(f"Source : {pdf_volume_path}")
 print(f"Dest   : {dest_table}")
 
 # COMMAND ----------
 
-SUPPORTED_EXTS_PATTERN = r"(?i)\.(pdf|jpg|jpeg|png|docx?)$"
+# MAGIC %md ## 1. Read PDF files from Volume
 
-# Read all supported files from the Volume as binary.
-# Normalize path: strip the "dbfs:" prefix that binaryFile format adds,
-# so paths stay consistent with any existing "/Volumes/..." entries in dest_table.
+# COMMAND ----------
+
+# Read all PDF files from the Volume as binary
 all_files_df = (
     spark.read.format("binaryFile")
-    .load(pdf_folder_path)
-    .filter(col("path").rlike(SUPPORTED_EXTS_PATTERN))
+    .option("pathGlobFilter", "*.pdf")
+    .option("recursiveFileLookup", "true")
+    .load(pdf_volume_path)
     .withColumn("path", regexp_replace(col("path"), r"^dbfs:", ""))
     .select("path", "content")
 )
@@ -49,7 +55,7 @@ if spark.catalog.tableExists(dest_table):
     already_parsed_df = spark.table(dest_table).select("path")
     files_to_process_df = all_files_df.join(already_parsed_df, on="path", how="left_anti")
 else:
-    files_to_process_df = all_files_df  # dest table doesn't exist yet
+    files_to_process_df = all_files_df
 
 total      = all_files_df.count()
 to_process = files_to_process_df.count()
@@ -58,113 +64,103 @@ print(f"Total files  : {total}")
 print(f"Already done : {total - to_process}")
 print(f"To process   : {to_process}")
 
+if to_process == 0:
+    print("Nothing new to process — table is already up to date.")
+    dbutils.notebook.exit("no_new_files")
+
 # COMMAND ----------
 
-# Step 1: Docling + Tesseract via Pandas UDF (primary).
-# Runs distributed across workers; Tesseract is a pre-installed system binary
-# on Databricks nodes so no extra ML model downloads are needed.
-@pandas_udf(StringType())
-def docling_tesseract_udf(content_series: pd.Series) -> pd.Series:
-    import io
-    import os
-    # torch._dynamo fails to resolve the cache directory in Spark worker environments.
-    # Pre-setting this env var bypasses the default_cache_dir() call at torch import time.
-    os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", "/tmp/torch_inductor_cache")
-    from docling.document_converter import DocumentConverter, PdfFormatOption
-    from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
-    from docling.datamodel.document import DocumentStream
+# MAGIC %md ## 2. Parse with ai_parse_document
 
-    opts = PdfPipelineOptions()
-    opts.do_ocr = True
-    opts.ocr_options = TesseractCliOcrOptions(force_full_page_ocr=True)
-    opts.do_table_structure = False
+# COMMAND ----------
 
-    converter = DocumentConverter(
-        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
-    )
+# ai_parse_document returns a VARIANT with document structure.
+# We repartition by file hash to parallelize across workers.
+num_partitions = min(to_process, 16)
 
-    results = []
-    for raw_bytes in content_series:
-        try:
-            stream = DocumentStream(name="doc.pdf", stream=io.BytesIO(bytes(raw_bytes)))
-            md = converter.convert(stream).document.export_to_markdown()
-        except Exception as e:
-            md = f"PARSE_ERROR: {e}"
-        results.append(md)
-    return pd.Series(results)
-
-num_partitions = min(to_process, 16) if to_process > 0 else 1
-docling_attempted_df = (
+parsed_df = (
     files_to_process_df
-    .repartition(num_partitions)
-    .withColumn("raw_parsed", docling_tesseract_udf(col("content")))
-    .select("path", "content", "raw_parsed")
+    .repartition(num_partitions, expr("crc32(path) % 8"))
+    .withColumn(
+        "_ai_result",
+        expr("TRY(ai_parse_document(content, map('version', '2.0')))")
+    )
 )
 
-docling_success_df = docling_attempted_df.filter(~col("raw_parsed").startswith("PARSE_ERROR:")).select("path", "raw_parsed")
-docling_failed_df  = docling_attempted_df.filter(col("raw_parsed").startswith("PARSE_ERROR:")).select("path", "content")
+# COMMAND ----------
 
-docling_success_count = docling_success_df.count()
-docling_failed_count  = docling_failed_df.count()
-
-print(f"Docling+Tesseract succeeded : {docling_success_count}")
-print(f"Docling+Tesseract failed    : {docling_failed_count}")
+# MAGIC %md ## 3. Extract text from parsed VARIANT
 
 # COMMAND ----------
 
-# Step 2: ai_parse_document fallback (Databricks built-in, serverless-friendly).
-# failOnError => false returns a result with an error field instead of throwing.
-# TRY() is an additional safety net in case the function still raises.
-if docling_failed_count > 0:
-    ai_attempted_df = (
-        docling_failed_df
-        .withColumn(
-            "_ai_result",
-            expr("TRY(ai_parse_document(content, map('failOnError', 'false')))")
-        )
-        .withColumn(
-            "raw_parsed",
-            when(col("_ai_result").isNotNull(), to_json(col("_ai_result"))).otherwise(None)
-        )
-        .drop("_ai_result")
-        .select("path", "raw_parsed")
+# Extract text content from parsed document elements.
+# Uses transform() + try_cast for safe access to the VARIANT structure.
+text_df = (
+    parsed_df
+    .withColumn(
+        "raw_parsed",
+        when(
+            col("_ai_result").isNotNull()
+            & expr("try_cast(_ai_result:error_status AS STRING)").isNull(),
+            concat_ws(
+                "\n\n",
+                expr("""
+                    transform(
+                        try_cast(_ai_result:document:elements AS ARRAY<VARIANT>),
+                        element -> try_cast(element:content AS STRING)
+                    )
+                """),
+            ),
+        ).otherwise(lit(None)),
     )
-else:
-    ai_attempted_df = spark.createDataFrame(
-        [],
-        schema=StructType([
-            StructField("path",       StringType(), True),
-            StructField("raw_parsed", StringType(), True),
-        ])
+    .withColumn(
+        "error_status",
+        expr("try_cast(_ai_result:error_status AS STRING)"),
     )
+    .drop("_ai_result", "content")
+)
 
-ai_success_count = ai_attempted_df.filter(col("raw_parsed").isNotNull()).count()
-ai_failed_count  = ai_attempted_df.filter(col("raw_parsed").isNull()).count()
+success_count = text_df.filter(col("raw_parsed").isNotNull()).count()
+failed_count  = text_df.filter(col("raw_parsed").isNull()).count()
 
-print(f"ai_parse_document succeeded : {ai_success_count}")
-print(f"ai_parse_document failed    : {ai_failed_count}")
+print(f"ai_parse_document succeeded : {success_count}")
+print(f"ai_parse_document failed    : {failed_count}")
 
 # COMMAND ----------
 
-# Combine both result sets, drop nulls, and write incrementally
-combined_df = (
-    docling_success_df.union(
-        ai_attempted_df.filter(col("raw_parsed").isNotNull())
-    )
+# MAGIC %md ## 4. Write results to Delta table
+
+# COMMAND ----------
+
+results_df = (
+    text_df
+    .filter(col("raw_parsed").isNotNull())
     .withColumn("ingested_at", current_timestamp())
+    .select("path", "raw_parsed", "ingested_at")
 )
 
-rows_to_write = combined_df.count()
+rows_to_write = results_df.count()
 print(f"Rows to write: {rows_to_write}")
 
 if rows_to_write > 0:
     (
-        combined_df
+        results_df
         .write.format("delta")
         .mode("append")
         .saveAsTable(dest_table)
     )
     print(f"Written to {dest_table}")
 else:
-    print("Nothing new to write — table is already up to date.")
+    print("Nothing new to write.")
+
+# Log errors for debugging
+if failed_count > 0:
+    print(f"\nFailed files ({failed_count}):")
+    failed_files = (
+        text_df
+        .filter(col("raw_parsed").isNull())
+        .select("path", "error_status")
+        .collect()
+    )
+    for row in failed_files:
+        print(f"  - {row['path']}: {row['error_status']}")

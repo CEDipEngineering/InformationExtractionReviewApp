@@ -1,5 +1,9 @@
 bundle:
-  name: information-extraction-review
+  name: techfin-ocr-balancos
+
+sync:
+  include:
+    - review-app/frontend/dist/**
 
 include:
   - resources/*.yml
@@ -14,20 +18,19 @@ variables:
   write_schema:
     description: "Schema for pipeline output tables"
     default: "ai"
-  pdf_folder_path:
-    description: "Full volume path to the folder that contains the PDFs to process"
+  pdf_volume_path:
+    description: "Full volume path to the folder containing PDFs to process"
     default: "/Volumes/cedip_fevm_aws_classic_stable_catalog/ai/techfin_raw_files/input_files/"
   warehouse_id:
     description: "SQL warehouse ID for the app and pipeline"
     default: "2c3975c5e258e46b"
   endpoint_name:
-    description: "Model serving endpoint for information extraction (ai_query)"
-    default: "extraction-agent-endpoint"
+    description: "Foundation Model API endpoint for financial extraction (ai_query)"
+    default: "databricks-claude-3-7-sonnet"
 
-  # Tags — change values here to apply across all resources
   tag_project:
     description: "Tag: project name applied to all resources"
-    default: "information-extraction"
+    default: "techfin-ocr"
   tag_env:
     description: "Tag: environment (defaults to bundle target name)"
     default: ${bundle.target}
