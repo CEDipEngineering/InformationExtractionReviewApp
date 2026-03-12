@@ -44,6 +44,9 @@ resources:
           notebook_task:
             notebook_path: ../src/agents/extractor/driver.py
             source: WORKSPACE
+            base_parameters:
+              tag_project: ${var.tag_project}
+              tag_env: ${var.tag_env}
 
         - task_key: extract_fields
           depends_on:

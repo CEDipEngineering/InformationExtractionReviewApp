@@ -26,6 +26,11 @@ ENDPOINT_NAME  = "extraction-agent-endpoint"
 # Path to agent.py relative to this notebook's directory
 AGENT_FILE = "agent.py"
 
+dbutils.widgets.text("tag_project", "information-extraction")
+dbutils.widgets.text("tag_env", "dev")
+TAG_PROJECT = dbutils.widgets.get("tag_project")
+TAG_ENV     = dbutils.widgets.get("tag_env")
+
 mlflow.set_registry_uri("databricks-uc")
 
 # Use the current user's home folder for the experiment
@@ -88,6 +93,10 @@ served_entity = serving.ServedEntityInput(
     scale_to_zero_enabled=True,
 )
 config = serving.EndpointCoreConfigInput(served_entities=[served_entity])
+endpoint_tags = [
+    serving.EndpointTag(key="project", value=TAG_PROJECT),
+    serving.EndpointTag(key="env",     value=TAG_ENV),
+]
 
 try:
     w.serving_endpoints.get(ENDPOINT_NAME)
@@ -99,7 +108,7 @@ try:
     print(f"Updated endpoint: {ENDPOINT_NAME}")
 except Exception:
     # Endpoint does not exist — create it
-    w.serving_endpoints.create(name=ENDPOINT_NAME, config=config).result()
+    w.serving_endpoints.create(name=ENDPOINT_NAME, config=config, tags=endpoint_tags).result()
     print(f"Created endpoint: {ENDPOINT_NAME}")
 
 print()
