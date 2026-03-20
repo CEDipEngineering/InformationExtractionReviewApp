@@ -1,0 +1,6 @@
+resources:
+  apps:
+    review_app:
+      name: "techfin-review-${bundle.target}"
+      description: "FastAPI + React app for reviewing and correcting financial extraction output"
+      source_code_path: ../review-app

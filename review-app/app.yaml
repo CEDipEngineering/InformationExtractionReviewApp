@@ -1,0 +1,21 @@
+command:
+  - python
+  - -m
+  - uvicorn
+  - app:app
+  - --host
+  - "0.0.0.0"
+  - --port
+  - "8000"
+
+env:
+  - name: WAREHOUSE_ID
+    value: "2c3975c5e258e46b"
+  - name: RESULTS_TABLE
+    value: "cedip_fevm_aws_classic_stable_catalog.ai.ocr_results"
+  - name: CORRECTIONS_TABLE
+    value: "cedip_fevm_aws_classic_stable_catalog.ai.ocr_corrections"
+  - name: PDF_VOLUME_PATH
+    value: "/Volumes/cedip_fevm_aws_classic_stable_catalog/ai/techfin_raw_files/input_files/"
+  - name: OCR_ENDPOINT
+    value: "databricks-claude-3-7-sonnet"
