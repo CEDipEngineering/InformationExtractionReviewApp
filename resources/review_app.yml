@@ -4,15 +4,3 @@ resources:
       name: "techfin-review-${bundle.target}"
       description: "FastAPI + React app for reviewing and correcting financial extraction output"
       source_code_path: ../review-app
-      config:
-        env:
-          - name: WAREHOUSE_ID
-            value: "${var.warehouse_id}"
-          - name: RESULTS_TABLE
-            value: "${var.catalog}.${var.write_schema}.ocr_results"
-          - name: CORRECTIONS_TABLE
-            value: "${var.catalog}.${var.write_schema}.ocr_corrections"
-          - name: PDF_VOLUME_PATH
-            value: "${var.pdf_volume_path}"
-          - name: OCR_ENDPOINT
-            value: "${var.endpoint_name}"
