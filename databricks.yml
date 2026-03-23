@@ -1,11 +1,5 @@
 bundle:
   name: techfin-ocr-balancos
-  scripts:
-    preDeploy: cd review-app/frontend && npm install && npm run build
-
-sync:
-  include:
-    - review-app/frontend/dist/**
 
 include:
   - resources/*.yml
