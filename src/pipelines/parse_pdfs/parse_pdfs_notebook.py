@@ -83,7 +83,7 @@ parsed_df = (
     .repartition(num_partitions, expr("crc32(path) % 8"))
     .withColumn(
         "_ai_result",
-        expr("TRY(ai_parse_document(content, map('version', '2.0')))")
+        expr("ai_parse_document(content, map('version', '2.0'))")
     )
 )
 
