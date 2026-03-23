@@ -70,7 +70,7 @@ techfin-ocr-balancos/
 │       │       ├── MetricsDashboard.tsx     # Metricas de correcoes
 │       │       ├── FontesPanel.tsx          # Painel de fontes/audit trail
 │       │       └── fieldDefinitions.ts      # Metadados dos 70+ campos
-│       └── dist/                           # Build estatico (gitignored, incluido no sync)
+│       └── dist/                           # Build estatico (gitignored, gerado no startup da app)
 ├── ocr-agent/                              # Referencia (versao anterior do agente)
 └── old_app/                                # Referencia (Streamlit + Docling + DSPy)
 ```
@@ -153,7 +153,6 @@ Aplicativo Databricks (FastAPI + React) para revisar e corrigir dados extraidos.
 
 ### Pre-requisitos
 - Databricks CLI configurado com profile `fevm`
-- Node.js >= 18 e npm (para build do frontend)
 - Workspace com SQL Warehouse ativo
 - Volume UC com PDFs de balancos patrimoniais
 
@@ -163,10 +162,7 @@ Aplicativo Databricks (FastAPI + React) para revisar e corrigir dados extraidos.
 # 1. Validar o bundle
 databricks bundle validate -t dev
 
-# 2. Build do frontend (obrigatorio antes do deploy)
-cd review-app/frontend && npm install && npm run build && cd ../..
-
-# 3. Deploy dos recursos
+# 2. Deploy dos recursos
 databricks bundle deploy -t dev
 
 # 4. Executar pipeline de extracao
