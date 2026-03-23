@@ -183,7 +183,7 @@ GRANT USE CATALOG ON CATALOG <catalog> TO `<sp-client-id>`;
 GRANT USE SCHEMA ON SCHEMA <catalog>.<schema> TO `<sp-client-id>`;
 GRANT SELECT ON TABLE <catalog>.<schema>.ocr_results TO `<sp-client-id>`;
 GRANT SELECT, MODIFY ON TABLE <catalog>.<schema>.ocr_corrections TO `<sp-client-id>`;
-GRANT READ_VOLUME ON VOLUME <catalog>.<schema>.techfin_raw_files TO `<sp-client-id>`;
+GRANT READ_VOLUME, WRITE_VOLUME ON VOLUME <catalog>.<schema>.techfin_raw_files TO `<sp-client-id>`;
 ```
 O grupo `users` precisa de `CAN_USE` no SQL Warehouse.
 
