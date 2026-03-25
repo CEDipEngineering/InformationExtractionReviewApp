@@ -1,14 +1,57 @@
 import io
 import json
 import os
-import requests as _requests
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
-from ..config import get_client, PDF_VOLUME_PATH, RESULTS_TABLE, OCR_ENDPOINT, DATABRICKS_HOST
+from ..config import get_client, PDF_VOLUME_PATH, RESULTS_TABLE, OCR_ENDPOINT
 
 router = APIRouter()
 
 # In-memory status tracker (resets on app restart; sufficient for this demo)
 _status: dict[str, dict] = {}
+
+_SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "..", "output_schema.json")
+
+with open(_SCHEMA_PATH) as _f:
+    _OUTPUT_SCHEMA = json.load(_f)
+
+_SCHEMA_STR = json.dumps(_OUTPUT_SCHEMA, ensure_ascii=False, indent=2)
+
+_INSTRUCTIONS = (
+    "* O documento pode conter MÚLTIPLAS colunas de dados: diferentes tipos de entidade "
+    "(Consolidado, Controladora/Individual) e/ou diferentes períodos (datas de referência). "
+    "Você DEVE extrair TODAS as combinações presentes, gerando um elemento no array para cada "
+    "combinação única de (tipo_entidade, periodo). Exemplos comuns: "
+    "[Consolidado 2024-12-31, Controladora 2024-12-31], "
+    "[Consolidado 2024-12-31, Consolidado 2023-12-31], "
+    "[Consolidado 2024-12-31, Controladora 2024-12-31, Consolidado 2023-12-31, Controladora 2023-12-31].\n"
+    "* Para cada elemento, preencha `tipo_entidade` com CONSOLIDADO, CONTROLADORA ou INDIVIDUAL, "
+    "conforme o cabeçalho da coluna correspondente no documento.\n"
+    "* Substitua qualquer valor null, vazio ou não informado por zero.\n"
+    "* Formate todos os números para exibir exatamente 2 casas decimais, usando ponto como separador, "
+    "mesmo que o valor seja inteiro ou zero (ex: 834988.00, 0.00, 15.50).\n"
+    "* Preencha o objeto `fontes` no JSON de saída: para cada campo extraído, indique qual texto exato do PDF "
+    "originou o valor. Use o caminho do campo como chave (ex: 'ativo_circulante.impostos_a_recuperar') "
+    "e como valor descreva brevemente: o(s) nome(s) da(s) linha(s) do documento, os valores individuais "
+    "e a operação realizada (ex: soma, leitura direta). "
+    "Exemplo: 'Impostos a recuperar (2.411) + IRPJ e CSLL a compensar (4.596) = 7.007 (escala: milhares)'. "
+    "Se o valor foi lido diretamente de uma única linha, indique apenas o nome da linha e o valor. "
+    "Inclua fontes apenas para campos com valor diferente de zero."
+)
+
+_PROMPT_PREFIX = f"""Você é um especialista em análise de demonstrações financeiras brasileiras.
+Sua tarefa é extrair informações estruturadas de documentos financeiros (Balanço Patrimonial e DRE).
+
+Instruções adicionais:
+{_INSTRUCTIONS}
+
+Retorne SOMENTE um JSON array válido seguindo exatamente o schema fornecido. Sem texto adicional.
+
+Extraia as informações financeiras do seguinte documento e retorne um JSON seguindo exatamente este schema:
+
+{_SCHEMA_STR}
+
+DOCUMENTO:
+"""
 
 
 def _extract_text_from_pdf(data: bytes) -> str:
@@ -22,48 +65,17 @@ def _extract_text_from_pdf(data: bytes) -> str:
     return "\n\n".join(pages)
 
 
-def _get_m2m_token(host: str) -> str | None:
-    """Generate a fresh OAuth M2M token using the app SP client credentials.
-
-    In Databricks Apps, DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET are
-    automatically injected by the runtime. We call /oidc/v1/token directly to
-    get a token scoped to all-apis, which can call FMAPI serving endpoints.
-    """
-    client_id = os.environ.get("DATABRICKS_CLIENT_ID")
-    client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
-    if not client_id or not client_secret:
-        return None
-    resp = _requests.post(
-        f"{host.rstrip('/')}/oidc/v1/token",
-        data={"grant_type": "client_credentials", "scope": "all-apis"},
-        auth=(client_id, client_secret),
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-
 def _call_ocr_endpoint(text: str, client) -> list:
-    """HTTP call with explicit timeout — avoids SDK hang on scale-to-zero cold start."""
-    host = client.config.host or DATABRICKS_HOST
-    if not host.startswith("http"):
-        host = f"https://{host}"
-    token = _get_m2m_token(host) or client.config.token
-    url = f"{host.rstrip('/')}/serving-endpoints/{OCR_ENDPOINT}/invocations"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    resp = _requests.post(
-        url,
-        headers=headers,
-        json={"dataframe_records": [{"text": text}]},
-        timeout=300,
+    """Call FMAPI endpoint via SDK — WorkspaceClient handles M2M auth natively."""
+    from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+    full_prompt = _PROMPT_PREFIX + text
+    response = client.serving_endpoints.query(
+        name=OCR_ENDPOINT,
+        messages=[ChatMessage(role=ChatMessageRole.USER, content=full_prompt)],
+        max_tokens=8192,
     )
-    resp.raise_for_status()
-    r = resp.json().get("predictions", resp.json())
-    if isinstance(r, list) and len(r) == 1:
-        r = r[0]
-    if isinstance(r, str):
-        r = json.loads(r)
+    result_text = response.choices[0].message.content
+    r = json.loads(result_text)
     if isinstance(r, dict):
         r = [r]
     return r
