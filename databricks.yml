@@ -45,3 +45,15 @@ targets:
       root_path: "/Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}"
     variables:
       write_schema: ai_prod
+
+  azdev:
+    mode: development
+    workspace:
+      host: https://adb-7405613524140009.9.azuredatabricks.net
+      profile: azfevm
+    variables:
+      catalog: catalog_nqc8lc_8uoefp
+      schema: ai
+      write_schema: ai
+      warehouse_id: 970182bc1a3cc5a0
+      pdf_volume_path: /Volumes/catalog_nqc8lc_8uoefp/ai/techfin_raw_files/input_files/
