@@ -93,7 +93,7 @@ print("Bootstrap complete.")
 grants = [
     f"GRANT USE CATALOG ON CATALOG `{catalog}` TO `{sp}`",
     f"GRANT USE SCHEMA ON SCHEMA `{catalog}`.`{schema}` TO `{sp}`",
-    f"GRANT SELECT ON TABLE `{catalog}`.`{schema}`.ocr_results TO `{sp}`",
+    f"GRANT SELECT, MODIFY ON TABLE `{catalog}`.`{schema}`.ocr_results TO `{sp}`",
     f"GRANT SELECT, MODIFY ON TABLE `{catalog}`.`{schema}`.ocr_corrections TO `{sp}`",
     f"GRANT READ_VOLUME, WRITE_VOLUME ON VOLUME `{catalog}`.`{schema}`.`{volume_name}` TO `{sp}`",
 ]
