@@ -1,12 +1,10 @@
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import Response
 from ..db import execute_sql
-from ..config import RESULTS_TABLE, get_client
+from ..config import RESULTS_TABLE, PDF_VOLUME_PATH, get_client
 from .upload import _extract_text_from_pdf, _call_ocr_endpoint, _save_result, _status
 
 router = APIRouter()
-
-PDF_VOLUME_PATH = "/Volumes/pedro_zanela/ia/dados/techfin/ocr"
 
 
 @router.get("/documents")

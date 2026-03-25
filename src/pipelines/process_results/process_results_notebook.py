@@ -20,8 +20,8 @@ from pyspark.sql.functions import col, current_timestamp, regexp_extract
 
 # COMMAND ----------
 
-dbutils.widgets.text("catalog", "cedip_fevm_aws_classic_stable_catalog")
-dbutils.widgets.text("write_schema", "ai")
+dbutils.widgets.text("catalog", "")
+dbutils.widgets.text("write_schema", "")
 
 catalog      = dbutils.widgets.get("catalog")
 write_schema = dbutils.widgets.get("write_schema")

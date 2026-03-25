@@ -1,3 +1,8 @@
+# Fallback runtime contract for local development and direct `databricks apps deploy` use.
+# When deployed via `databricks bundle run review_app`, the config.env block in
+# resources/review_app.yml overrides these values with ${var.*} substitutions per target.
+# NOTE: ${var.*} substitution is NOT supported here — parameterization must live in databricks.yml.
+
 command:
   - bash
   - -c
@@ -5,7 +10,7 @@ command:
 
 env:
   - name: WAREHOUSE_ID
-    valueFrom: sql-warehouse
+    value_from: sql-warehouse
   - name: RESULTS_TABLE
     value: "cedip_fevm_aws_classic_stable_catalog.ai.ocr_results"
   - name: CORRECTIONS_TABLE
@@ -14,4 +19,3 @@ env:
     value: "/Volumes/cedip_fevm_aws_classic_stable_catalog/ai/techfin_raw_files/input_files/"
   - name: OCR_ENDPOINT
     value: "databricks-claude-3-7-sonnet"
-

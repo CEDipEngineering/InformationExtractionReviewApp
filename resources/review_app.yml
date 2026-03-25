@@ -4,3 +4,34 @@ resources:
       name: "techfin-review-${bundle.target}"
       description: "FastAPI + React app for reviewing and correcting financial extraction output"
       source_code_path: ../review-app
+
+      # config is applied by `databricks bundle run review_app` (NOT by `databricks apps deploy`).
+      # This is the canonical source of env vars for each target — values here override app.yaml.
+      config:
+        command:
+          - bash
+          - -c
+          - "cd frontend && npm install && npm run build && cd .. && python -m uvicorn app:app --host 0.0.0.0 --port 8000"
+        env:
+          - name: WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: RESULTS_TABLE
+            value: "${var.catalog}.${var.write_schema}.ocr_results"
+          - name: CORRECTIONS_TABLE
+            value: "${var.catalog}.${var.write_schema}.ocr_corrections"
+          - name: PDF_VOLUME_PATH
+            value: "${var.pdf_volume_path}"
+          - name: OCR_ENDPOINT
+            value: "${var.endpoint_name}"
+
+      # Resource bindings grant the app's auto-generated SP the declared permissions.
+      # The sql-warehouse name matches the value_from reference in config.env above.
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+        - name: ocr-endpoint
+          serving_endpoint:
+            name: ${var.endpoint_name}
+            permission: CAN_QUERY

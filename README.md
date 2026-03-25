@@ -152,9 +152,34 @@ Aplicativo Databricks (FastAPI + React) para revisar e corrigir dados extraidos.
 ## Deploy
 
 ### Pre-requisitos
-- Databricks CLI configurado com profile `fevm`
+- Databricks CLI configurado com profile `fevm` (`~/.databrickscfg`)
 - Workspace com SQL Warehouse ativo
 - Volume UC com PDFs de balancos patrimoniais
+
+### Ambiente novo (primeira vez)
+
+Em um workspace diferente, sobrescreva as variaveis do bundle via `--var` ou `BUNDLE_VAR_*`:
+
+```bash
+# Opção 1: flags --var no deploy
+databricks bundle deploy -t dev \
+  --var catalog=meu_catalog \
+  --var warehouse_id=abc123def456 \
+  --var pdf_volume_path=/Volumes/meu_catalog/meu_schema/pdfs/
+
+# Opção 2: variáveis de ambiente (ideal para CI/CD)
+export BUNDLE_VAR_catalog=meu_catalog
+export BUNDLE_VAR_warehouse_id=abc123def456
+export BUNDLE_VAR_pdf_volume_path=/Volumes/meu_catalog/meu_schema/pdfs/
+databricks bundle deploy -t dev
+```
+
+Precedencia de resolucao das variaveis (maior para menor):
+1. `--var` no CLI
+2. `BUNDLE_VAR_*` variáveis de ambiente
+3. `.databricks/bundle/<target>/variable-overrides.json` (gitignored, dev local)
+4. `variables.<target>` no `databricks.yml`
+5. `default` da variável
 
 ### Passo a passo
 
@@ -162,42 +187,50 @@ Aplicativo Databricks (FastAPI + React) para revisar e corrigir dados extraidos.
 # 1. Validar o bundle
 databricks bundle validate -t dev
 
-# 2. Deploy dos recursos
+# 2. Deploy dos recursos (job, DLT pipeline, app)
 databricks bundle deploy -t dev
 
-# 4. Executar pipeline de extracao
+# 3. Executar pipeline de extracao (parse -> extract -> process)
 databricks bundle run extraction_job -t dev
 
-# 5. Iniciar/deploy da review app
-databricks apps start techfin-review-dev --profile fevm
-databricks apps deploy techfin-review-dev \
-  --source-code-path /Workspace/Users/<user>/.bundle/techfin-ocr-balancos/dev/files/review-app \
-  --profile fevm
+# 4. Iniciar a review app (aplica config.env e inicia o processo)
+#    IMPORTANTE: usar bundle run, NAO databricks apps deploy
+#    O bloco config em review_app.yml só é aplicado via bundle run.
+databricks bundle run review_app -t dev
 ```
 
 ### Permissoes da App
 
-O Service Principal da app precisa de:
+O Service Principal da app (gerado automaticamente) precisa de:
 ```sql
 GRANT USE CATALOG ON CATALOG <catalog> TO `<sp-client-id>`;
-GRANT USE SCHEMA ON SCHEMA <catalog>.<schema> TO `<sp-client-id>`;
-GRANT SELECT ON TABLE <catalog>.<schema>.ocr_results TO `<sp-client-id>`;
-GRANT SELECT, MODIFY ON TABLE <catalog>.<schema>.ocr_corrections TO `<sp-client-id>`;
-GRANT READ_VOLUME, WRITE_VOLUME ON VOLUME <catalog>.<schema>.techfin_raw_files TO `<sp-client-id>`;
+GRANT USE SCHEMA ON SCHEMA <catalog>.<write_schema> TO `<sp-client-id>`;
+GRANT SELECT ON TABLE <catalog>.<write_schema>.ocr_results TO `<sp-client-id>`;
+GRANT SELECT, MODIFY ON TABLE <catalog>.<write_schema>.ocr_corrections TO `<sp-client-id>`;
+GRANT READ_VOLUME, WRITE_VOLUME ON VOLUME <catalog>.<write_schema>.techfin_raw_files TO `<sp-client-id>`;
 ```
 O grupo `users` precisa de `CAN_USE` no SQL Warehouse.
+
+O client ID do SP pode ser obtido apos o primeiro deploy:
+```bash
+databricks apps get techfin-review-dev --profile fevm | jq '.service_principal_client_id'
+```
 
 ### Producao
 
 ```bash
 databricks bundle deploy -t prod
 databricks bundle run extraction_job -t prod
+databricks bundle run review_app -t prod
 ```
+
+> No target `prod`, `write_schema` assume o valor `ai_prod`. As tabelas e env vars do app
+> sao resolvidas automaticamente via `${var.*}` no `resources/review_app.yml`.
 
 ### Comandos uteis
 
 ```bash
-# Logs da app
+# Status e URL da app
 databricks apps get techfin-review-dev --profile fevm
 
 # Destruir recursos (cuidado!)

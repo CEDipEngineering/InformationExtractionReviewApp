@@ -1,6 +1,5 @@
 import io
 import json
-import os
 import requests as _requests
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
 from ..config import get_client, PDF_VOLUME_PATH, RESULTS_TABLE, OCR_ENDPOINT, DATABRICKS_HOST
@@ -24,14 +23,7 @@ def _extract_text_from_pdf(data: bytes) -> str:
 
 def _call_ocr_endpoint(text: str, client) -> list:
     """HTTP call with explicit timeout — avoids SDK hang on scale-to-zero cold start."""
-    token = os.environ.get("OCR_PAT")
-    if not token:
-        import base64
-        try:
-            secret = client.secrets.get_secret(scope="pedro-zanela-scope", key="techfin-ocr-pat")
-            token = base64.b64decode(secret.value).decode()
-        except Exception:
-            token = client.config.token
+    token = client.config.token
     host = client.config.host or DATABRICKS_HOST
     if not host.startswith("http"):
         host = f"https://{host}"

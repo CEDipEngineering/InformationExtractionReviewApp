@@ -20,10 +20,10 @@ from pyspark.sql.functions import regexp_replace, regexp_extract
 
 # COMMAND ----------
 
-dbutils.widgets.text("pdf_volume_path", "/Volumes/cedip_fevm_aws_classic_stable_catalog/ai/techfin_raw_files/input_files/")
-dbutils.widgets.text("catalog", "cedip_fevm_aws_classic_stable_catalog")
-dbutils.widgets.text("schema", "ai")
-dbutils.widgets.text("write_schema", "ai")
+dbutils.widgets.text("pdf_volume_path", "")
+dbutils.widgets.text("catalog", "")
+dbutils.widgets.text("schema", "")
+dbutils.widgets.text("write_schema", "")
 
 pdf_volume_path = dbutils.widgets.get("pdf_volume_path")
 catalog         = dbutils.widgets.get("catalog")

@@ -1,0 +1,23 @@
+resources:
+  jobs:
+    grant_permissions_job:
+      name: "[${bundle.target}] TechFin Grant App Permissions"
+      description: >
+        Grants Unity Catalog privileges to the Review App's auto-generated service principal.
+        Run once after first deploy, or after the app is recreated.
+        DABs resolves the SP client ID from the app resource at deploy time.
+
+      tags:
+        env: ${var.tag_env}
+        project: ${var.tag_project}
+
+      tasks:
+        - task_key: grant
+          notebook_task:
+            notebook_path: ../src/pipelines/grant_permissions/grant_permissions_notebook.py
+            source: WORKSPACE
+            base_parameters:
+              sp_client_id: ${resources.apps.review_app.service_principal_client_id}
+              catalog: ${var.catalog}
+              write_schema: ${var.write_schema}
+              pdf_volume_path: ${var.pdf_volume_path}
