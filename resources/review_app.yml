@@ -31,7 +31,6 @@ resources:
           sql_warehouse:
             id: ${var.warehouse_id}
             permission: CAN_USE
-        - name: ocr-endpoint
-          serving_endpoint:
-            name: ${var.endpoint_name}
-            permission: CAN_QUERY
+        # Note: Databricks-managed FMAPI endpoints (e.g. databricks-claude-3-7-sonnet)
+        # do not support SP-level CAN_QUERY grants. The app uses the user's OBO token
+        # (X-Forwarded-Access-Token header) for FMAPI calls instead.

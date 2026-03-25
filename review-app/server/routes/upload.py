@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import requests as _requests
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File
 from ..config import get_client, PDF_VOLUME_PATH, RESULTS_TABLE, OCR_ENDPOINT, DATABRICKS_HOST
@@ -21,12 +22,33 @@ def _extract_text_from_pdf(data: bytes) -> str:
     return "\n\n".join(pages)
 
 
+def _get_m2m_token(host: str) -> str | None:
+    """Generate a fresh OAuth M2M token using the app SP client credentials.
+
+    In Databricks Apps, DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET are
+    automatically injected by the runtime. We call /oidc/v1/token directly to
+    get a token scoped to all-apis, which can call FMAPI serving endpoints.
+    """
+    client_id = os.environ.get("DATABRICKS_CLIENT_ID")
+    client_secret = os.environ.get("DATABRICKS_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        return None
+    resp = _requests.post(
+        f"{host.rstrip('/')}/oidc/v1/token",
+        data={"grant_type": "client_credentials", "scope": "all-apis"},
+        auth=(client_id, client_secret),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
 def _call_ocr_endpoint(text: str, client) -> list:
     """HTTP call with explicit timeout — avoids SDK hang on scale-to-zero cold start."""
-    token = client.config.token
     host = client.config.host or DATABRICKS_HOST
     if not host.startswith("http"):
         host = f"https://{host}"
+    token = _get_m2m_token(host) or client.config.token
     url = f"{host.rstrip('/')}/serving-endpoints/{OCR_ENDPOINT}/invocations"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
