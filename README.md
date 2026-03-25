@@ -134,9 +134,9 @@ Aplicativo Databricks (FastAPI + React) para revisar e corrigir dados extraidos.
 | Variavel | Default | Descricao |
 |---|---|---|
 | `catalog` | `cedip_fevm_aws_classic_stable_catalog` | Unity Catalog catalog |
-| `schema` | `ai` | Schema de leitura (tabelas fonte) |
-| `write_schema` | `ai` (prod: `ai_prod`) | Schema de escrita (tabelas de saida) |
-| `pdf_volume_path` | `/Volumes/.../techfin_raw_files/input_files/` | Volume com PDFs de entrada |
+| `schema` | `techfin_balanco` (prod: `ai_prod`) | Schema de leitura (tabelas fonte) |
+| `write_schema` | `techfin_balanco` (prod: `ai_prod`) | Schema de escrita (tabelas de saida) |
+| `pdf_volume_path` | `/Volumes/.../techfin_balanco/techfin_raw_files/input_files/` | Volume com PDFs de entrada |
 | `warehouse_id` | `2c3975c5e258e46b` | SQL Warehouse ID |
 | `endpoint_name` | `databricks-claude-3-7-sonnet` | Endpoint FMAPI para extracao |
 
@@ -205,7 +205,7 @@ O Service Principal da app (gerado automaticamente) precisa de:
 ```sql
 GRANT USE CATALOG ON CATALOG <catalog> TO `<sp-client-id>`;
 GRANT USE SCHEMA ON SCHEMA <catalog>.<write_schema> TO `<sp-client-id>`;
-GRANT SELECT ON TABLE <catalog>.<write_schema>.ocr_results TO `<sp-client-id>`;
+GRANT SELECT, MODIFY ON TABLE <catalog>.<write_schema>.ocr_results TO `<sp-client-id>`;
 GRANT SELECT, MODIFY ON TABLE <catalog>.<write_schema>.ocr_corrections TO `<sp-client-id>`;
 GRANT READ_VOLUME, WRITE_VOLUME ON VOLUME <catalog>.<write_schema>.techfin_raw_files TO `<sp-client-id>`;
 ```

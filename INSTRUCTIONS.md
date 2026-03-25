@@ -115,7 +115,7 @@ databricks apps deploy techfin-review-dev \
 | Variavel | Onde e usada | Como alterar |
 |---|---|---|
 | `catalog` | Todas as tasks + app | Mudar default ou override no target |
-| `write_schema` | Tabelas de saida | `ai` (dev), `ai_prod` (prod) |
+| `write_schema` | Tabelas de saida | `techfin_balanco` (dev), `ai_prod` (prod) |
 | `endpoint_name` | DLT pipeline + review app | Nome do endpoint FMAPI |
 | `warehouse_id` | Review app (Statement Execution API) | ID do SQL Warehouse |
 | `pdf_volume_path` | parse_pdfs + review app | Volume UC com PDFs de entrada |
@@ -141,13 +141,13 @@ O Service Principal (SP) da Databricks App precisa de grants especificos. Sem el
 
 ```sql
 -- Substituir <catalog>, <schema> e <sp-client-id> pelos valores reais
--- SP client ID atual: 72092ac5-964f-40e1-91e6-f1d4f36480d7
+-- SP client ID obtido via: databricks apps get techfin-review-dev --profile fevm | jq '.service_principal_client_id'
 
 GRANT USE CATALOG ON CATALOG <catalog> TO `<sp-client-id>`;
 GRANT USE SCHEMA ON SCHEMA <catalog>.<schema> TO `<sp-client-id>`;
-GRANT SELECT ON TABLE <catalog>.<schema>.ocr_results TO `<sp-client-id>`;
+GRANT SELECT, MODIFY ON TABLE <catalog>.<schema>.ocr_results TO `<sp-client-id>`;
 GRANT SELECT, MODIFY ON TABLE <catalog>.<schema>.ocr_corrections TO `<sp-client-id>`;
-GRANT READ_VOLUME ON VOLUME <catalog>.<schema>.techfin_raw_files TO `<sp-client-id>`;
+GRANT READ_VOLUME, WRITE_VOLUME ON VOLUME <catalog>.<schema>.techfin_raw_files TO `<sp-client-id>`;
 ```
 
 Alem disso, o grupo `users` precisa de `CAN_USE` no SQL Warehouse para que a app consiga executar queries.
@@ -227,11 +227,15 @@ databricks bundle deploy -t dev
 databricks bundle run extraction_job -t dev --task process_results
 ```
 
-### Upload/Reprocessamento da app falha com 401
+### Upload/Reprocessamento da app falha com 401 ou 400
 
-O `_call_ocr_endpoint` em `upload.py` faz chamada HTTP direta ao endpoint FMAPI. Se o token do SP nao tiver permissao no endpoint, falhara com 401. Verifique:
-- Se o OCR_ENDPOINT em `app.yaml` aponta para um endpoint valido
-- Se o SP tem permissao CAN_QUERY no endpoint
+O `_call_ocr_endpoint` em `upload.py` usa o SDK do Databricks (`client.serving_endpoints.query`) com `ChatMessage`, que gerencia autenticacao OAuth M2M automaticamente via `DATABRICKS_CLIENT_ID` e `DATABRICKS_CLIENT_SECRET` injetados pelo runtime da app.
+
+Endpoints FMAPI gerenciados pelo Databricks (ex: `databricks-claude-3-7-sonnet`) **nao suportam** grants `CAN_QUERY` por SP — nao tente adicionar essa permissao. A autenticacao e feita via M2M com as credenciais do SP da app.
+
+Se o erro persistir:
+- Verificar que `OCR_ENDPOINT` aponta para um endpoint FMAPI valido
+- Verificar que o `WorkspaceClient()` esta sendo inicializado corretamente (checar logs da app)
 
 ---
 
@@ -242,7 +246,7 @@ O `_call_ocr_endpoint` em `upload.py` faz chamada HTTP direta ao endpoint FMAPI.
 | Aspecto | dev | prod |
 |---|---|---|
 | `mode` | development | production |
-| `write_schema` | ai | ai_prod |
+| `write_schema` | techfin_balanco | ai_prod |
 | Nome do job | [dev] TechFin OCR... | [prod] TechFin OCR... |
 | Tabelas de saida | catalog.ai.* | catalog.ai_prod.* |
 

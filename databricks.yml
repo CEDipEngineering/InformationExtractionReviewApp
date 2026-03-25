@@ -37,6 +37,10 @@ targets:
     mode: development
     workspace:
       profile: fevm
+    variables:
+      schema: techfin_balanco
+      write_schema: techfin_balanco
+      pdf_volume_path: /Volumes/cedip_fevm_aws_classic_stable_catalog/techfin_balanco/techfin_raw_files/input_files/
 
   prod:
     mode: production
